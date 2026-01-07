@@ -1,0 +1,141 @@
+"""Test 5: Reward/penalty impact on weights and gradients."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from cryptomvp.config import load_config
+from cryptomvp.data.build_dataset import build_synthetic_dataset
+from cryptomvp.data.features import compute_features
+from cryptomvp.data.labels import make_up_down_labels
+from cryptomvp.data.windowing import make_windows
+from cryptomvp.train.rl_env import RewardConfig
+from cryptomvp.train.rl_train import train_reinforce
+from cryptomvp.utils.logging import get_logger
+from cryptomvp.utils.io import reports_dir
+from cryptomvp.utils.seed import set_seed
+from cryptomvp.viz.plotting import plot_runs_with_band
+
+
+def _load_dataset(path: Path) -> pd.DataFrame:
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path)
+
+
+def run_reward_weights(config_path: str, fast: bool) -> None:
+    cfg = load_config(config_path)
+    logger = get_logger("reward_weights")
+    set_seed(42)
+
+    if fast:
+        interval_ms = int(cfg.interval) * 60_000
+        df = build_synthetic_dataset(0, interval_ms * 600, seed=33, interval_ms=interval_ms)
+    else:
+        df = _load_dataset(Path(cfg.dataset.output_path))
+
+    features = compute_features(df, cfg.features.list_of_features)
+    X, window_times, _ = make_windows(features, cfg.features.window_size_K)
+    y_up, _ = make_up_down_labels(df, window_times)
+
+    n = min(len(X), len(y_up))
+    X = X[:n]
+    y_up = y_up[:n]
+    X_flat = X.reshape(len(X), -1)
+
+    num_episodes = 3 if fast else cfg.rl.episodes
+    steps_per_episode = 50 if fast else cfg.rl.steps_per_episode
+    hold_penalties = [0.01, 0.1, 0.2]
+    histories = []
+    labels = []
+
+    for rh in hold_penalties:
+        reward_cfg = RewardConfig(
+            R_correct=cfg.rl.reward.R_correct,
+            R_wrong=cfg.rl.reward.R_wrong,
+            R_hold=rh,
+        )
+        _, hist = train_reinforce(
+            X_flat,
+            y_up,
+            episodes=num_episodes,
+            steps_per_episode=steps_per_episode,
+            lr=cfg.rl.lr,
+            gamma=cfg.rl.gamma,
+            reward_cfg=reward_cfg,
+            entropy_bonus=cfg.rl.entropy_bonus,
+            seed=7,
+            track_diagnostics=True,
+            model_name=f"reward_hold_{rh}",
+        )
+        histories.append(hist)
+        labels.append(f"R_hold={rh}")
+
+    episodes = np.arange(1, num_episodes + 1)
+    report_dir = reports_dir("reward_weights")
+    fig_dir = report_dir / "figures"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    grad_runs = np.vstack([h.grad_norms for h in histories])
+    delta_runs = np.vstack([h.delta_weight_norms for h in histories])
+    hold_runs = np.vstack([h.hold_rates for h in histories])
+
+    plot_runs_with_band(
+        episodes,
+        grad_runs,
+        title="Gradient Norm vs Episode",
+        xlabel="Episode",
+        ylabel="Grad norm",
+        out_base=fig_dir / "grad_norm",
+        formats=cfg.viz.save_formats,
+        labels=labels,
+    )
+    plot_runs_with_band(
+        episodes,
+        delta_runs,
+        title="Delta Weight Norm vs Episode",
+        xlabel="Episode",
+        ylabel="Delta weight norm",
+        out_base=fig_dir / "delta_weight_norm",
+        formats=cfg.viz.save_formats,
+        labels=labels,
+    )
+    plot_runs_with_band(
+        episodes,
+        hold_runs,
+        title="Hold Rate vs Episode (R_hold sweep)",
+        xlabel="Episode",
+        ylabel="Hold rate",
+        out_base=fig_dir / "hold_rate_sweep",
+        formats=cfg.viz.save_formats,
+        labels=labels,
+    )
+
+    summary_lines = ["# Reward vs Weights Summary", ""]
+    for rh, hist in zip(hold_penalties, histories):
+        summary_lines.append(
+            f"R_hold={rh}: final hold_rate={hist.hold_rates[-1]:.4f}, "
+            f"final grad_norm={hist.grad_norms[-1]:.4f}, "
+            f"final delta_weight_norm={hist.delta_weight_norms[-1]:.4f}"
+        )
+
+    (report_dir / "summary.md").write_text("\n".join(summary_lines), encoding="utf-8")
+    logger.info("Reward weights report written to %s", report_dir)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="configs/mvp.yaml")
+    parser.add_argument("--fast", action="store_true")
+    args = parser.parse_args()
+    run_reward_weights(args.config, fast=args.fast)

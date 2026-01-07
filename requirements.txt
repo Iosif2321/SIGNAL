@@ -1,0 +1,15 @@
+# Core
+numpy
+pandas
+matplotlib
+pyyaml
+httpx
+websockets
+scikit-learn
+pyarrow
+
+# ML
+torch
+
+# Dev/test
+pytest
