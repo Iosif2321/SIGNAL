@@ -28,6 +28,7 @@ from cryptomvp.train.feature_importance import compute_feature_importance
 from cryptomvp.train.supervised import train_supervised
 from cryptomvp.utils.io import reports_dir
 from cryptomvp.utils.logging import get_logger
+from cryptomvp.utils.run_dir import init_run_dir
 from cryptomvp.utils.seed import set_seed
 from cryptomvp.viz.plotting import (
     plot_bar,
@@ -70,6 +71,9 @@ def _save_decision_log(
     df["prob"] = probs.astype(float)
     df["pred"] = preds.astype(int)
     df["true"] = y_true.astype(int)
+    df["y_prob"] = probs.astype(float)
+    df["y_pred"] = preds.astype(int)
+    df["y_true"] = y_true.astype(int)
     df["correct"] = (df["pred"] == df["true"]).astype(int)
     df.to_parquet(out_path, index=False)
 
@@ -89,16 +93,19 @@ def _save_training_metrics(out_path: Path, history) -> None:
     df.to_csv(out_path, index=False)
 
 
-def run_supervised(config_path: str, fast: bool) -> None:
+def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
+    init_run_dir(run_dir, config_path)
     cfg = load_config(config_path)
     logger = get_logger("supervised")
-    set_seed(42)
+    set_seed(cfg.seed)
 
     if fast:
         interval_ms = int(cfg.interval) * 60_000
         df = build_synthetic_dataset(0, interval_ms * 800, seed=17, interval_ms=interval_ms)
     else:
         df = _load_dataset(Path(cfg.dataset.output_path))
+    start_ms = int(df["open_time_ms"].min())
+    end_ms = int(df["open_time_ms"].max())
 
     features = compute_features(df, cfg.features.list_of_features)
     X, window_times, feature_cols = make_windows(features, cfg.features.window_size_K)
@@ -121,6 +128,9 @@ def run_supervised(config_path: str, fast: bool) -> None:
 
     y_up_test = y_up[val_end:]
     y_down_test = y_down[val_end:]
+    up_rate = float(np.mean(y_up_test))
+    down_rate = float(np.mean(y_down_test))
+    flat_rate = max(0.0, 1.0 - up_rate - down_rate)
     Xtr, ytr = X_flat[:train_end], y_up[:train_end]
     Xv, yv = X_flat[train_end:val_end], y_up[train_end:val_end]
     Xte, yte = X_flat[val_end:], y_up_test
@@ -225,6 +235,14 @@ def run_supervised(config_path: str, fast: bool) -> None:
         "\n".join(
             [
                 "# Supervised UP",
+                f"Symbol: {cfg.symbol}",
+                f"Interval: {cfg.interval}",
+                f"Seed: {cfg.seed}",
+                f"Start ms: {start_ms}",
+                f"End ms: {end_ms}",
+                f"Test samples: {len(y_up_test)}",
+                f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
+                f"Threshold: {cfg.decision_rule.T_min}",
                 f"Accuracy: {up_eval['accuracy']:.4f}",
                 f"F1: {up_eval['f1']:.4f}",
                 f"Final weight_norm: {up_hist.weight_norms[-1]:.4f}",
@@ -362,6 +380,14 @@ def run_supervised(config_path: str, fast: bool) -> None:
         "\n".join(
             [
                 "# Supervised DOWN",
+                f"Symbol: {cfg.symbol}",
+                f"Interval: {cfg.interval}",
+                f"Seed: {cfg.seed}",
+                f"Start ms: {start_ms}",
+                f"End ms: {end_ms}",
+                f"Test samples: {len(y_down_test)}",
+                f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
+                f"Threshold: {cfg.decision_rule.T_min}",
                 f"Accuracy: {down_eval['accuracy']:.4f}",
                 f"F1: {down_eval['f1']:.4f}",
                 f"Final weight_norm: {down_hist.weight_norms[-1]:.4f}",
@@ -402,10 +428,15 @@ def run_supervised(config_path: str, fast: bool) -> None:
     n_test = min(len(up_eval["probs"]), len(down_eval["probs"]))
     p_up = up_eval["probs"][:n_test, 1]
     p_down = down_eval["probs"][:n_test, 1]
-    thresholds = np.linspace(0.5, 0.9, 9)
+    thresholds = np.arange(
+        cfg.decision_rule.scan_min,
+        cfg.decision_rule.scan_max + cfg.decision_rule.scan_step / 2,
+        cfg.decision_rule.scan_step,
+    )
     hold_rates = scan_thresholds(p_up, p_down, thresholds)
     default_decisions = batch_decide(p_up, p_down, cfg.decision_rule.T_min)
     default_hold_rate = hold_rate(default_decisions)
+    conflict_rate = float(np.mean((p_up >= cfg.decision_rule.T_min) & (p_down >= cfg.decision_rule.T_min)))
     rule_dir = reports_dir("decision_rule")
     rule_fig_dir = rule_dir / "figures"
     rule_fig_dir.mkdir(parents=True, exist_ok=True)
@@ -418,18 +449,6 @@ def run_supervised(config_path: str, fast: bool) -> None:
         formats=cfg.viz.save_formats,
     )
 
-    (rule_dir / "summary.md").write_text(
-        "\n".join(
-            [
-                "# Decision Rule",
-                f"Thresholds: {thresholds.tolist()}",
-                f"Hold rates: {hold_rates}",
-                f"Default T_min: {cfg.decision_rule.T_min}",
-                f"Default hold_rate: {default_hold_rate:.4f}",
-            ]
-        ),
-        encoding="utf-8",
-    )
     decisions = batch_decide(p_up, p_down, cfg.decision_rule.T_min)
     true_dir = []
     for up_val, down_val in zip(y_up_test[:n_test], y_down_test[:n_test]):
@@ -439,17 +458,93 @@ def run_supervised(config_path: str, fast: bool) -> None:
             true_dir.append("DOWN")
         else:
             true_dir.append("FLAT")
-    correct_dir = [
-        int(d == t) if d != "HOLD" else 0 for d, t in zip(decisions, true_dir)
-    ]
+    correct_dir = [int(d == t) if d != "HOLD" else 0 for d, t in zip(decisions, true_dir)]
+    action_mask = np.array([d != "HOLD" for d in decisions])
+    action_rate = float(np.mean(action_mask))
+    action_accuracy = float(np.mean([c for c, d in zip(correct_dir, decisions) if d != "HOLD"])) if action_mask.any() else 0.0
+    precision_up = float(
+        np.mean([t == "UP" for t, d in zip(true_dir, decisions) if d == "UP"])
+    ) if any(d == "UP" for d in decisions) else 0.0
+    precision_down = float(
+        np.mean([t == "DOWN" for t, d in zip(true_dir, decisions) if d == "DOWN"])
+    ) if any(d == "DOWN" for d in decisions) else 0.0
+
+    accuracy_by_threshold = []
+    conflict_rates = []
+    for t in thresholds:
+        d_list = batch_decide(p_up, p_down, float(t))
+        mask = np.array([d != "HOLD" for d in d_list])
+        conflict_rates.append(float(np.mean((p_up >= t) & (p_down >= t))))
+        if mask.any():
+            accuracy_by_threshold.append(
+                float(np.mean([d == tr for d, tr in zip(d_list, true_dir) if d != "HOLD"]))
+            )
+        else:
+            accuracy_by_threshold.append(0.0)
+
+    plot_threshold_scan(
+        thresholds,
+        accuracy_by_threshold,
+        window=cfg.viz.moving_window,
+        title="Action Accuracy vs Threshold",
+        out_base=rule_fig_dir / "accuracy_threshold",
+        formats=cfg.viz.save_formats,
+        ylabel="Accuracy (non-hold)",
+        label="accuracy_non_hold",
+    )
+
+    plot_threshold_scan(
+        thresholds,
+        conflict_rates,
+        window=cfg.viz.moving_window,
+        title="Conflict Rate vs Threshold",
+        out_base=rule_fig_dir / "conflict_rate_threshold",
+        formats=cfg.viz.save_formats,
+        ylabel="Conflict rate",
+        label="conflict_rate",
+    )
+
+    threshold_scan_df = pd.DataFrame(
+        {
+            "threshold": thresholds,
+            "hold_rate": hold_rates,
+            "action_accuracy_non_hold": accuracy_by_threshold,
+            "conflict_rate": conflict_rates,
+        }
+    )
+    threshold_scan_df.to_csv(rule_dir / "threshold_scan.csv", index=False)
+
+    (rule_dir / "summary.md").write_text(
+        "\n".join(
+            [
+                "# Decision Rule",
+                f"Symbol: {cfg.symbol}",
+                f"Interval: {cfg.interval}",
+                f"Seed: {cfg.seed}",
+                f"Samples: {n_test}",
+                f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
+                f"Default T_min: {cfg.decision_rule.T_min}",
+                f"Default hold_rate: {default_hold_rate:.4f}",
+                f"Action rate: {action_rate:.4f}",
+                f"Action accuracy (non-hold): {action_accuracy:.4f}",
+                f"Conflict rate: {conflict_rate:.4f}",
+                f"Precision UP (system): {precision_up:.4f}",
+                f"Precision DOWN (system): {precision_down:.4f}",
+                f"Threshold scan rows: {len(thresholds)}",
+            ]
+        ),
+        encoding="utf-8",
+    )
     decision_log = pd.DataFrame(
         {
             "open_time_ms": times_te[:n_test],
             "p_up": p_up.astype(float),
             "p_down": p_down.astype(float),
+            "p_max": np.maximum(p_up, p_down).astype(float),
             "decision": decisions,
             "true_direction": true_dir,
             "correct_direction": correct_dir,
+            "conflict": ((p_up >= cfg.decision_rule.T_min) & (p_down >= cfg.decision_rule.T_min)).astype(int),
         }
     )
     for idx, feature in enumerate(feature_cols):
@@ -463,5 +558,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/mvp.yaml")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--run-dir", default=None)
     args = parser.parse_args()
-    run_supervised(args.config, fast=args.fast)
+    run_supervised(args.config, fast=args.fast, run_dir=Path(args.run_dir) if args.run_dir else None)

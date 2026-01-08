@@ -20,6 +20,7 @@ from cryptomvp.bybit.ws import collect_klines_sync  # noqa: E402
 from cryptomvp.config import load_config  # noqa: E402
 from cryptomvp.utils.io import data_dir, reports_dir  # noqa: E402
 from cryptomvp.utils.logging import get_logger  # noqa: E402
+from cryptomvp.utils.run_dir import init_run_dir  # noqa: E402
 from cryptomvp.utils.seed import set_seed  # noqa: E402
 from cryptomvp.viz.plotting import plot_bar, plot_histogram  # noqa: E402
 
@@ -29,10 +30,16 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def run_ping_compare(config_path: str, duration_sec: int, rest_delay_sec: int) -> None:
+def run_ping_compare(
+    config_path: str,
+    duration_sec: int,
+    rest_delay_sec: int,
+    run_dir: Path | None = None,
+) -> None:
+    init_run_dir(run_dir, config_path)
     cfg = load_config(config_path)
     logger = get_logger("ping_compare")
-    set_seed(42)
+    set_seed(cfg.seed)
 
     topic = f"kline.{cfg.interval}.{cfg.symbol}"
     ws_candles = collect_klines_sync(topic=topic, duration_sec=duration_sec, max_candles=1)
@@ -68,9 +75,9 @@ def run_ping_compare(config_path: str, duration_sec: int, rest_delay_sec: int) -
     if rest_candle is None:
         raise RuntimeError("No REST candle returned.")
 
-    data_dir("ping")
-    _write_json(data_dir("ping") / "ws_candle.json", ws_candle.__dict__)
-    _write_json(data_dir("ping") / "rest_candle.json", rest_candle.__dict__)
+    data_dir("raw", "ping")
+    _write_json(data_dir("raw", "ping") / "ws_candle.json", ws_candle.__dict__)
+    _write_json(data_dir("raw", "ping") / "rest_candle.json", rest_candle.__dict__)
 
     fields = ["open", "high", "low", "close", "volume", "turnover"]
     diffs = {}
@@ -129,5 +136,11 @@ if __name__ == "__main__":
     parser.add_argument("--config", default="configs/mvp.yaml")
     parser.add_argument("--duration-sec", type=int, default=90)
     parser.add_argument("--rest-delay-sec", type=int, default=60)
+    parser.add_argument("--run-dir", default=None)
     args = parser.parse_args()
-    run_ping_compare(args.config, duration_sec=args.duration_sec, rest_delay_sec=args.rest_delay_sec)
+    run_ping_compare(
+        args.config,
+        duration_sec=args.duration_sec,
+        rest_delay_sec=args.rest_delay_sec,
+        run_dir=Path(args.run_dir) if args.run_dir else None,
+    )

@@ -17,8 +17,6 @@ from sklearn.metrics import (
     roc_curve,
 )
 
-import matplotlib.pyplot as plt
-
 from cryptomvp.config import Config, load_config
 from cryptomvp.data.features import compute_features
 from cryptomvp.data.labels import make_up_down_labels
@@ -159,6 +157,7 @@ def _plot_curve(
     baseline_label: str = "baseline",
 ) -> None:
     apply_style()
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots()
     ax.plot(x, y, label=label)
     if baseline is not None:
@@ -213,6 +212,8 @@ def analyze_supervised(
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     tn, fp, fn, tp = cm.ravel()
     coverage = float(np.mean(y_pred == 1))
+    base_rate = float(np.mean(y_true))
+    lift = float(precision / base_rate) if base_rate > 0 else np.nan
 
     roc_auc, pr_auc, roc_curve_data, pr_curve_data = _safe_metrics_from_probs(
         y_true, y_prob
@@ -305,6 +306,8 @@ def analyze_supervised(
         "roc_auc": float(roc_auc) if roc_auc is not None else np.nan,
         "pr_auc": float(pr_auc) if pr_auc is not None else np.nan,
         "coverage": coverage,
+        "base_rate": base_rate,
+        "lift": lift,
         "tn": int(tn),
         "fp": int(fp),
         "fn": int(fn),
@@ -357,11 +360,17 @@ def analyze_decision_rule(
     conflict_rate = float(np.mean((p_up >= threshold) & (p_down >= threshold)))
 
     action_accuracy = np.nan
+    precision_up = np.nan
+    precision_down = np.nan
     if true_col is not None:
         true_dir = _normalize_direction(df[true_col])
         mask = ~is_hold
         if mask.any():
             action_accuracy = float((decision[mask] == true_dir[mask]).mean())
+        if (decision == "UP").any():
+            precision_up = float((true_dir[decision == "UP"] == "UP").mean())
+        if (decision == "DOWN").any():
+            precision_down = float((true_dir[decision == "DOWN"] == "DOWN").mean())
     elif correct_col is not None:
         mask = ~is_hold
         if mask.any():
@@ -460,6 +469,8 @@ def analyze_decision_rule(
         "action_rate": action_rate,
         "conflict_rate": conflict_rate,
         "action_accuracy_non_hold": float(action_accuracy),
+        "precision_up_system": float(precision_up),
+        "precision_down_system": float(precision_down),
     }
 
 

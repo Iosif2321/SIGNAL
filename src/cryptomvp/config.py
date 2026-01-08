@@ -26,6 +26,8 @@ class ParityConfig:
     duration_sec: int
     ws_topic: str
     rest_compare_mode: str
+    target_closed_candles: int
+    max_wait_sec: int
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,9 @@ class RLConfig:
 @dataclass(frozen=True)
 class DecisionRuleConfig:
     T_min: float
+    scan_min: float
+    scan_max: float
+    scan_step: float
 
 
 @dataclass(frozen=True)
@@ -76,6 +81,7 @@ class Config:
     symbol: str
     category: str
     interval: str
+    seed: int
     dataset: DatasetConfig
     parity: ParityConfig
     features: FeaturesConfig
@@ -134,6 +140,8 @@ def load_config(path: str | Path) -> Config:
         duration_sec=int(data["parity"]["duration_sec"]),
         ws_topic=str(data["parity"]["ws_topic"]),
         rest_compare_mode=str(data["parity"]["rest_compare_mode"]),
+        target_closed_candles=int(data["parity"].get("target_closed_candles", 10)),
+        max_wait_sec=int(data["parity"].get("max_wait_sec", data["parity"]["duration_sec"])),
     )
 
     features_cfg = FeaturesConfig(
@@ -153,6 +161,8 @@ def load_config(path: str | Path) -> Config:
         R_wrong=float(data["rl"]["reward"]["R_wrong"]),
         R_hold=float(data["rl"]["reward"]["R_hold"]),
     )
+    if reward_cfg.R_correct <= 0 or reward_cfg.R_wrong <= 0 or reward_cfg.R_hold <= 0:
+        raise ValueError("Reward config values must be positive (R_correct/R_wrong/R_hold).")
 
     rl_cfg = RLConfig(
         episodes=int(data["rl"]["episodes"]),
@@ -162,8 +172,15 @@ def load_config(path: str | Path) -> Config:
         reward=reward_cfg,
         entropy_bonus=float(data["rl"]["entropy_bonus"]),
     )
+    if rl_cfg.entropy_bonus < 0:
+        raise ValueError("entropy_bonus must be non-negative.")
 
-    decision_cfg = DecisionRuleConfig(T_min=float(data["decision_rule"]["T_min"]))
+    decision_cfg = DecisionRuleConfig(
+        T_min=float(data["decision_rule"]["T_min"]),
+        scan_min=float(data["decision_rule"].get("scan_min", 0.45)),
+        scan_max=float(data["decision_rule"].get("scan_max", 0.75)),
+        scan_step=float(data["decision_rule"].get("scan_step", 0.01)),
+    )
 
     viz_cfg = VizConfig(
         out_dir=viz_out_dir,
@@ -175,6 +192,7 @@ def load_config(path: str | Path) -> Config:
         symbol=str(data["symbol"]),
         category=str(data["category"]),
         interval=str(data["interval"]),
+        seed=int(data.get("seed", 42)),
         dataset=dataset_cfg,
         parity=parity_cfg,
         features=features_cfg,

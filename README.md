@@ -15,7 +15,9 @@ pip install -r requirements.txt
 
 ## Run Tests / Scripts
 
-All scripts write artifacts into `reports/` and raw data into `data/`.
+All scripts create a run folder under `runs/` (timestamped) with:
+`runs/<run_id>/reports/`, `runs/<run_id>/data/`, and `runs/<run_id>/checkpoints/`.
+You can override the run folder with `--run-dir`.
 
 ### Test 1: WS vs REST parity
 ```bash
@@ -49,13 +51,21 @@ python scripts/mvp_run_all.py --fast
 
 ## Reports
 
-Artifacts are stored under `reports/`:
-- `reports/parity/`
-- `reports/dataset/`
-- `reports/supervised_up/`, `reports/supervised_down/`
-- `reports/rl_up/`, `reports/rl_down/`
-- `reports/reward_weights/`
-- `reports/decision_rule/`
+Artifacts are stored under `runs/<run_id>/reports/`:
+- `runs/<run_id>/reports/parity/`
+- `runs/<run_id>/reports/dataset/`
+- `runs/<run_id>/reports/supervised_up/`, `runs/<run_id>/reports/supervised_down/`
+- `runs/<run_id>/reports/rl_up/`, `runs/<run_id>/reports/rl_down/`
+- `runs/<run_id>/reports/reward_weights/`
+- `runs/<run_id>/reports/decision_rule/`
+
+Run metadata and copied config live in `runs/<run_id>/metadata.json` and `runs/<run_id>/config.yaml`.
+
+## Pytest
+
+```bash
+pytest -q
+```
 
 ## Notes
 

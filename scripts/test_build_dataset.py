@@ -21,23 +21,25 @@ from cryptomvp.data.build_dataset import (
     save_dataset,
 )
 from cryptomvp.data.validate_dataset import validate_dataset
-from cryptomvp.utils.io import reports_dir
+from cryptomvp.utils.io import data_dir, reports_dir
 from cryptomvp.utils.logging import get_logger
+from cryptomvp.utils.run_dir import init_run_dir
 from cryptomvp.utils.seed import set_seed
 from cryptomvp.viz.plotting import plot_histogram, plot_series_with_band
 
 
-def run_build_dataset(config_path: str, fast: bool) -> Path:
+def run_build_dataset(config_path: str, fast: bool, run_dir: Path | None = None) -> Path:
+    init_run_dir(run_dir, config_path)
     cfg = load_config(config_path)
     logger = get_logger("dataset")
-    set_seed(42)
+    set_seed(cfg.seed)
 
     interval_ms = int(cfg.interval) * 60_000
     if fast:
         start_ms = 0
         end_ms = interval_ms * 500
         df = build_synthetic_dataset(start_ms, end_ms, seed=11, interval_ms=interval_ms)
-        output_path = Path("data/processed/synthetic.parquet")
+        output_path = data_dir("processed") / "synthetic.parquet"
         out = save_dataset(df, output_path)
     else:
         if cfg.dataset.start_ms is None or cfg.dataset.end_ms is None:
@@ -114,10 +116,16 @@ def run_build_dataset(config_path: str, fast: bool) -> Path:
 
     summary = [
         "# Dataset Validation",
+        f"Symbol: {cfg.symbol}",
+        f"Interval: {cfg.interval}",
+        f"Seed: {cfg.seed}",
+        f"Start ms: {int(df['open_time_ms'].min())}",
+        f"End ms: {int(df['open_time_ms'].max())}",
         f"Rows: {report.total_rows}",
         f"Monotonic: {report.monotonic}",
         f"Duplicates: {report.duplicate_count}",
         f"Missing: {report.missing_count}",
+        f"Output path: {out}",
     ]
     (report_dir / "summary.md").write_text("\n".join(summary), encoding="utf-8")
 
@@ -129,5 +137,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/mvp.yaml")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--run-dir", default=None)
     args = parser.parse_args()
-    run_build_dataset(args.config, fast=args.fast)
+    run_build_dataset(args.config, fast=args.fast, run_dir=Path(args.run_dir) if args.run_dir else None)

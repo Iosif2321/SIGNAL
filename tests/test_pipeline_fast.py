@@ -14,24 +14,25 @@ from scripts.test_reward_weights import run_reward_weights
 
 def test_pipeline_fast():
     config = "configs/mvp.yaml"
+    run_dir = Path("runs/test_fast")
 
-    run_parity(config, fast=True)
-    run_build_dataset(config, fast=True)
+    run_parity(config, fast=True, run_dir=run_dir)
+    run_build_dataset(config, fast=True, run_dir=run_dir)
 
-    assert (Path("reports") / "parity" / "summary.md").exists()
-    assert (Path("reports") / "dataset" / "summary.md").exists()
+    assert (run_dir / "reports" / "parity" / "summary.md").exists()
+    assert (run_dir / "reports" / "dataset" / "summary.md").exists()
 
     if torch.cuda.is_available():
-        run_supervised(config, fast=True)
-        run_rl(config, fast=True)
-        run_reward_weights(config, fast=True)
-        assert (Path("reports") / "supervised_up").exists()
-        assert (Path("reports") / "rl_up").exists()
-        assert (Path("reports") / "reward_weights").exists()
+        run_supervised(config, fast=True, run_dir=run_dir)
+        run_rl(config, fast=True, run_dir=run_dir)
+        run_reward_weights(config, fast=True, run_dir=run_dir)
+        assert (run_dir / "reports" / "supervised_up").exists()
+        assert (run_dir / "reports" / "rl_up").exists()
+        assert (run_dir / "reports" / "reward_weights").exists()
     else:
         with pytest.raises(CudaUnavailableError):
-            run_supervised(config, fast=True)
+            run_supervised(config, fast=True, run_dir=run_dir)
         with pytest.raises(CudaUnavailableError):
-            run_rl(config, fast=True)
+            run_rl(config, fast=True, run_dir=run_dir)
         with pytest.raises(CudaUnavailableError):
-            run_reward_weights(config, fast=True)
+            run_reward_weights(config, fast=True, run_dir=run_dir)

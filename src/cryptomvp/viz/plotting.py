@@ -7,9 +7,10 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from cryptomvp.viz.style import apply_style
+
+import matplotlib.pyplot as plt
 
 
 def _ensure_array(y: Sequence[float]) -> np.ndarray:
@@ -60,6 +61,31 @@ def plot_series_with_band(
     ax.legend()
     save_figure(fig, out_base, formats)
     plt.close(fig)
+
+
+def plot_series_with_mean_band(
+    x: Sequence[float],
+    y: Sequence[float],
+    window: int,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    label: str,
+    out_base: Path,
+    formats: Iterable[str],
+) -> None:
+    """Alias for plot_series_with_band to keep naming consistent."""
+    plot_series_with_band(
+        x,
+        y,
+        window=window,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        label=label,
+        out_base=out_base,
+        formats=formats,
+    )
 
 
 def plot_runs_with_band(
@@ -166,6 +192,8 @@ def plot_threshold_scan(
     title: str,
     out_base: Path,
     formats: Iterable[str],
+    ylabel: str = "Hold rate",
+    label: str = "hold_rate",
 ) -> None:
     plot_series_with_band(
         thresholds,
@@ -173,8 +201,8 @@ def plot_threshold_scan(
         window=window,
         title=title,
         xlabel="Threshold",
-        ylabel="Hold rate",
-        label="hold_rate",
+        ylabel=ylabel,
+        label=label,
         out_base=out_base,
         formats=formats,
     )

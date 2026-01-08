@@ -33,12 +33,16 @@ def _parse_kline(item: dict) -> Optional[KlineCandle]:
 
 async def collect_klines(
     topic: str,
-    duration_sec: int,
+    duration_sec: Optional[int] = None,
     max_candles: Optional[int] = None,
+    target_candles: Optional[int] = None,
+    max_wait_sec: Optional[int] = None,
 ) -> List[KlineCandle]:
-    """Collect closed klines from Bybit WS for a fixed duration."""
+    """Collect closed klines from Bybit WS with count or time limits."""
     candles: List[KlineCandle] = []
     start_time = time.time()
+    target_count = target_candles or max_candles
+    wait_limit = max_wait_sec or duration_sec or 60
 
     async with websockets.connect(
         WS_URL,
@@ -49,11 +53,13 @@ async def collect_klines(
         sub_msg = {"op": "subscribe", "args": [topic]}
         await ws.send(json.dumps(sub_msg))
 
-        while time.time() - start_time < duration_sec:
+        while time.time() - start_time < wait_limit:
             try:
-                msg = await asyncio.wait_for(ws.recv(), timeout=duration_sec)
+                remaining = wait_limit - (time.time() - start_time)
+                timeout = max(1.0, min(5.0, remaining))
+                msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
             except asyncio.TimeoutError:
-                break
+                continue
             data = json.loads(msg)
             if data.get("topic") != topic:
                 continue
@@ -62,14 +68,24 @@ async def collect_klines(
                 candle = _parse_kline(item)
                 if candle:
                     candles.append(candle)
-                    if max_candles and len(candles) >= max_candles:
+                    if target_count and len(candles) >= target_count:
                         return candles
     return candles
 
 
 def collect_klines_sync(
     topic: str,
-    duration_sec: int,
+    duration_sec: Optional[int] = None,
     max_candles: Optional[int] = None,
+    target_candles: Optional[int] = None,
+    max_wait_sec: Optional[int] = None,
 ) -> List[KlineCandle]:
-    return asyncio.run(collect_klines(topic, duration_sec, max_candles=max_candles))
+    return asyncio.run(
+        collect_klines(
+            topic,
+            duration_sec=duration_sec,
+            max_candles=max_candles,
+            target_candles=target_candles,
+            max_wait_sec=max_wait_sec,
+        )
+    )

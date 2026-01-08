@@ -7,6 +7,7 @@ from cryptomvp.viz.plotting import (
     plot_confusion_matrix,
     plot_histogram,
     plot_series_with_band,
+    plot_series_with_mean_band,
 )
 
 
@@ -23,6 +24,17 @@ def test_viz_outputs(tmp_path: Path):
         ylabel="y",
         label="y",
         out_base=out_base,
+        formats=["png"],
+    )
+    plot_series_with_mean_band(
+        x,
+        y,
+        window=3,
+        title="Test Series Alias",
+        xlabel="x",
+        ylabel="y",
+        label="y",
+        out_base=tmp_path / "series_alias",
         formats=["png"],
     )
 
@@ -55,6 +67,7 @@ def test_viz_outputs(tmp_path: Path):
     )
 
     assert (tmp_path / "series.png").exists()
+    assert (tmp_path / "series_alias.png").exists()
     assert (tmp_path / "hist.png").exists()
     assert (tmp_path / "bar.png").exists()
     assert (tmp_path / "cm.png").exists()

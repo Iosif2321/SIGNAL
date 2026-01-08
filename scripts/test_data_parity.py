@@ -21,8 +21,10 @@ from cryptomvp.config import load_config
 from cryptomvp.data.build_dataset import build_synthetic_dataset, klines_to_dataframe
 from cryptomvp.utils.io import data_dir, reports_dir
 from cryptomvp.utils.logging import get_logger
+from cryptomvp.utils.run_dir import init_run_dir
 from cryptomvp.utils.seed import set_seed
-from cryptomvp.viz.plotting import plot_bar, plot_histogram, plot_series_with_band
+from cryptomvp.viz.plotting import plot_bar, plot_histogram, plot_series_with_band, save_figure
+from cryptomvp.viz.style import apply_style
 
 
 def _write_jsonl(path: Path, candles: List[KlineCandle]) -> None:
@@ -37,15 +39,34 @@ def _compare_frames(ws_df: pd.DataFrame, rest_df: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
-def run_parity(config_path: str, fast: bool) -> None:
+def _plot_ecdf(values: np.ndarray, out_base: Path, formats: list[str]) -> None:
+    apply_style()
+    import matplotlib.pyplot as plt
+    vals = np.sort(values)
+    y = np.arange(1, len(vals) + 1) / len(vals)
+    fig, ax = plt.subplots()
+    ax.plot(vals, y, label="ECDF")
+    ax.set_title("Close Diff ECDF")
+    ax.set_xlabel("Diff")
+    ax.set_ylabel("ECDF")
+    ax.legend()
+    save_figure(fig, out_base, formats)
+    plt.close(fig)
+
+
+def run_parity(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
+    init_run_dir(run_dir, config_path)
     cfg = load_config(config_path)
     logger = get_logger("parity")
-    set_seed(42)
+    set_seed(cfg.seed)
+
+    interval_ms = int(cfg.interval) * 60_000
+    target_candles = cfg.parity.target_closed_candles
+    max_wait_sec = cfg.parity.max_wait_sec
 
     if fast:
-        interval_ms = int(cfg.interval) * 60_000
         start_ms = 0
-        end_ms = interval_ms * 200
+        end_ms = interval_ms * target_candles
         ws_df = build_synthetic_dataset(start_ms, end_ms, seed=7, interval_ms=interval_ms)
         rest_df = ws_df.copy()
         rest_df["close"] = rest_df["close"] + np.random.normal(0, 0.5, size=len(rest_df))
@@ -79,12 +100,17 @@ def run_parity(config_path: str, fast: bool) -> None:
     else:
         topic = cfg.parity.ws_topic
         from cryptomvp.bybit.ws import collect_klines_sync
-        ws_candles = collect_klines_sync(topic=topic, duration_sec=cfg.parity.duration_sec)
+
+        ws_candles = collect_klines_sync(
+            topic=topic,
+            target_candles=target_candles,
+            max_wait_sec=max_wait_sec,
+        )
         if not ws_candles:
             raise RuntimeError("No WS candles collected.")
         ws_df = klines_to_dataframe(ws_candles)
         start_ms = int(ws_df["open_time_ms"].min())
-        end_ms = int(ws_df["open_time_ms"].max()) + 60_000
+        end_ms = int(ws_df["open_time_ms"].max()) + interval_ms
 
         from cryptomvp.bybit.rest import BybitRestClient
 
@@ -102,9 +128,9 @@ def run_parity(config_path: str, fast: bool) -> None:
             client.close()
         rest_df = klines_to_dataframe(rest_candles)
 
-    data_dir("parity")
-    _write_jsonl(data_dir("parity") / "ws_klines.jsonl", ws_candles)
-    _write_jsonl(data_dir("parity") / "rest_klines.jsonl", rest_candles)
+    data_dir("raw", "parity")
+    _write_jsonl(data_dir("raw", "parity") / "ws_klines.jsonl", ws_candles)
+    _write_jsonl(data_dir("raw", "parity") / "rest_klines.jsonl", rest_candles)
 
     merged = _compare_frames(ws_df, rest_df)
     merged = merged.sort_values("open_time_ms").reset_index(drop=True)
@@ -145,6 +171,11 @@ def run_parity(config_path: str, fast: bool) -> None:
         out_base=figures_dir / "close_diff_hist",
         formats=cfg.viz.save_formats,
     )
+    _plot_ecdf(
+        diffs["close"].fillna(0.0).to_numpy(),
+        out_base=figures_dir / "close_diff_ecdf",
+        formats=cfg.viz.save_formats,
+    )
 
     plot_bar(
         list(mismatch_counts.keys()),
@@ -159,9 +190,14 @@ def run_parity(config_path: str, fast: bool) -> None:
     summary_path = report_dir / "summary.md"
     summary_lines = [
         "# Parity Summary",
+        f"Symbol: {cfg.symbol}",
+        f"Interval: {cfg.interval}",
+        f"Seed: {cfg.seed}",
         f"WS candles: {len(ws_df)}",
         f"REST candles: {len(rest_df)}",
         f"Merged rows: {len(merged)}",
+        f"Target closed candles: {target_candles}",
+        f"Max wait sec: {max_wait_sec}",
         "",
         "Mismatch counts:",
     ]
@@ -176,5 +212,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/mvp.yaml")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--run-dir", default=None)
     args = parser.parse_args()
-    run_parity(args.config, fast=args.fast)
+    run_parity(args.config, fast=args.fast, run_dir=Path(args.run_dir) if args.run_dir else None)

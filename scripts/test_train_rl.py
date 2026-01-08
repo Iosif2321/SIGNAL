@@ -25,6 +25,7 @@ from cryptomvp.train.rl_env import RewardConfig
 from cryptomvp.train.rl_train import train_reinforce
 from cryptomvp.utils.io import checkpoints_dir, reports_dir
 from cryptomvp.utils.logging import get_logger
+from cryptomvp.utils.run_dir import init_run_dir
 from cryptomvp.utils.seed import set_seed
 from cryptomvp.viz.plotting import plot_bar, plot_series_with_band
 
@@ -44,16 +45,19 @@ def _build_feature_columns(feature_cols: list[str], window_size: int) -> list[st
     return cols
 
 
-def run_rl(config_path: str, fast: bool) -> None:
+def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
+    init_run_dir(run_dir, config_path)
     cfg = load_config(config_path)
     logger = get_logger("rl")
-    set_seed(42)
+    set_seed(cfg.seed)
 
     if fast:
         interval_ms = int(cfg.interval) * 60_000
         df = build_synthetic_dataset(0, interval_ms * 800, seed=21, interval_ms=interval_ms)
     else:
         df = _load_dataset(Path(cfg.dataset.output_path))
+    start_ms = int(df["open_time_ms"].min())
+    end_ms = int(df["open_time_ms"].max())
 
     features = compute_features(df, cfg.features.list_of_features)
     X, window_times, feature_cols = make_windows(features, cfg.features.window_size_K)
@@ -63,6 +67,9 @@ def run_rl(config_path: str, fast: bool) -> None:
     X = X[:n]
     y_up = y_up[:n]
     y_down = y_down[:n]
+    up_rate = float(np.mean(y_up))
+    down_rate = float(np.mean(y_down))
+    flat_rate = max(0.0, 1.0 - up_rate - down_rate)
 
     X_flat = X.reshape(len(X), -1)
     times = window_times[:n]
@@ -179,6 +186,17 @@ def run_rl(config_path: str, fast: bool) -> None:
         "\n".join(
             [
                 "# RL UP",
+                f"Symbol: {cfg.symbol}",
+                f"Interval: {cfg.interval}",
+                f"Seed: {cfg.seed}",
+                f"Start ms: {start_ms}",
+                f"End ms: {end_ms}",
+                f"Samples: {len(y_up)}",
+                f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
+                f"R_correct: {cfg.rl.reward.R_correct}",
+                f"R_wrong: {cfg.rl.reward.R_wrong}",
+                f"R_hold: {cfg.rl.reward.R_hold}",
+                f"Entropy bonus: {cfg.rl.entropy_bonus}",
                 f"Final reward: {up_hist.rewards[-1]:.4f}",
                 f"Final hold_rate: {up_hist.hold_rates[-1]:.4f}",
                 f"Final accuracy: {up_hist.accuracies[-1]:.4f}",
@@ -304,6 +322,17 @@ def run_rl(config_path: str, fast: bool) -> None:
         "\n".join(
             [
                 "# RL DOWN",
+                f"Symbol: {cfg.symbol}",
+                f"Interval: {cfg.interval}",
+                f"Seed: {cfg.seed}",
+                f"Start ms: {start_ms}",
+                f"End ms: {end_ms}",
+                f"Samples: {len(y_down)}",
+                f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
+                f"R_correct: {cfg.rl.reward.R_correct}",
+                f"R_wrong: {cfg.rl.reward.R_wrong}",
+                f"R_hold: {cfg.rl.reward.R_hold}",
+                f"Entropy bonus: {cfg.rl.entropy_bonus}",
                 f"Final reward: {down_hist.rewards[-1]:.4f}",
                 f"Final hold_rate: {down_hist.hold_rates[-1]:.4f}",
                 f"Final accuracy: {down_hist.accuracies[-1]:.4f}",
@@ -332,5 +361,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/mvp.yaml")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--run-dir", default=None)
     args = parser.parse_args()
-    run_rl(args.config, fast=args.fast)
+    run_rl(args.config, fast=args.fast, run_dir=Path(args.run_dir) if args.run_dir else None)

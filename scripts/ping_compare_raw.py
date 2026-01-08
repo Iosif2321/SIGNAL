@@ -20,6 +20,7 @@ if str(SRC) not in sys.path:
 from cryptomvp.config import load_config  # noqa: E402
 from cryptomvp.utils.io import data_dir, reports_dir  # noqa: E402
 from cryptomvp.utils.logging import get_logger  # noqa: E402
+from cryptomvp.utils.run_dir import init_run_dir  # noqa: E402
 from cryptomvp.utils.seed import set_seed  # noqa: E402
 from cryptomvp.viz.plotting import plot_bar, plot_histogram  # noqa: E402
 
@@ -133,10 +134,12 @@ def run_ping_compare(
     rest_delay_sec: int,
     max_retries: int,
     retry_delay_sec: int,
+    run_dir: Path | None = None,
 ) -> None:
+    init_run_dir(run_dir, config_path)
     cfg = load_config(config_path)
     logger = get_logger("ping_compare_raw")
-    set_seed(42)
+    set_seed(cfg.seed)
 
     topic = f"kline.{cfg.interval}.{cfg.symbol}"
     ws_candle = asyncio_run(_collect_ws_candle(topic, timeout_sec=duration_sec))
@@ -163,7 +166,7 @@ def run_ping_compare(
     if rest_candle is None:
         raise RuntimeError("REST candle with matching open_time_ms not found.")
 
-    out_dir = data_dir("ping_raw")
+    out_dir = data_dir("raw", "ping_raw")
     (out_dir / "ws_candle.json").write_text(json.dumps(ws_candle, indent=2), encoding="utf-8")
     (out_dir / "rest_candle.json").write_text(json.dumps(rest_candle, indent=2), encoding="utf-8")
 
@@ -238,6 +241,7 @@ if __name__ == "__main__":
     parser.add_argument("--rest-delay-sec", type=int, default=60)
     parser.add_argument("--max-retries", type=int, default=6)
     parser.add_argument("--retry-delay-sec", type=int, default=10)
+    parser.add_argument("--run-dir", default=None)
     args = parser.parse_args()
     run_ping_compare(
         args.config,
@@ -245,4 +249,5 @@ if __name__ == "__main__":
         rest_delay_sec=args.rest_delay_sec,
         max_retries=args.max_retries,
         retry_delay_sec=args.retry_delay_sec,
+        run_dir=Path(args.run_dir) if args.run_dir else None,
     )

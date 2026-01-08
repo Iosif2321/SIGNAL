@@ -1,0 +1,24 @@
+{
+  "run_id": "2026-01-08_16-36-52",
+  "created_at": "2026-01-08T16:36:52",
+  "config_path": "configs/mvp.yaml",
+  "git_commit": "894a5e17e1e9ec7d63e8e0692e9017c07a5d170e",
+  "python_version": "3.11.9",
+  "packages": {
+    "numpy": "2.4.0",
+    "pandas": "2.3.3",
+    "torch": "2.6.0+cu124",
+    "scikit-learn": "1.8.0",
+    "matplotlib": "3.10.8",
+    "pyyaml": "6.0.3",
+    "httpx": "0.28.1",
+    "websockets": "15.0.1",
+    "pyarrow": "22.0.0"
+  },
+  "gpu": {
+    "cuda_available": true,
+    "cuda_version": "12.4",
+    "gpu_name": "NVIDIA GeForce GTX 1060 6GB",
+    "gpu_count": 1
+  }
+}

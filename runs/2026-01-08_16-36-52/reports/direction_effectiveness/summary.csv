@@ -1,0 +1,6 @@
+model,n,threshold,precision,recall,f1,roc_auc,pr_auc,coverage,base_rate,lift,tn,fp,fn,tp,prob_mean,prob_std,hold_rate,action_rate,conflict_rate,action_accuracy_non_hold,precision_up_system,precision_down_system,action_precision,action_recall
+supervised_up,115,0.55,0.0,0.0,0.0,0.5344827586206896,0.5898812181829742,0.0,0.4956521739130435,0.0,58.0,0.0,57.0,0.0,0.48992537726526675,0.009784560014282184,,,,,,,,
+supervised_down,115,0.55,0.0,0.0,0.0,0.5577737447065941,0.5785444698301273,0.0,0.5043478260869565,0.0,57.0,0.0,58.0,0.0,0.47767391308494234,0.004099624398920093,,,,,,,,
+decision_rule,115,0.55,,,,,,,,,,,,,,,1.0,0.0,0.0,,,,,
+rl_up,150,,,,,,,,,,,,,,,,0.38,0.62,,,,,0.5268817204301075,
+rl_down,150,,,,,,,,,,,,,,,,0.41333333333333333,0.5866666666666667,,,,,0.5113636363636364,

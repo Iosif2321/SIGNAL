@@ -23,6 +23,7 @@ from cryptomvp.train.rl_env import RewardConfig
 from cryptomvp.train.rl_train import train_reinforce
 from cryptomvp.utils.logging import get_logger
 from cryptomvp.utils.io import reports_dir
+from cryptomvp.utils.run_dir import init_run_dir
 from cryptomvp.utils.seed import set_seed
 from cryptomvp.viz.plotting import plot_runs_with_band
 
@@ -33,31 +34,39 @@ def _load_dataset(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def run_reward_weights(config_path: str, fast: bool) -> None:
+def run_reward_weights(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
+    init_run_dir(run_dir, config_path)
     cfg = load_config(config_path)
     logger = get_logger("reward_weights")
-    set_seed(42)
+    set_seed(cfg.seed)
 
     if fast:
         interval_ms = int(cfg.interval) * 60_000
         df = build_synthetic_dataset(0, interval_ms * 600, seed=33, interval_ms=interval_ms)
     else:
         df = _load_dataset(Path(cfg.dataset.output_path))
+    start_ms = int(df["open_time_ms"].min())
+    end_ms = int(df["open_time_ms"].max())
 
     features = compute_features(df, cfg.features.list_of_features)
     X, window_times, _ = make_windows(features, cfg.features.window_size_K)
-    y_up, _ = make_up_down_labels(df, window_times)
+    y_up, y_down = make_up_down_labels(df, window_times)
 
     n = min(len(X), len(y_up))
     X = X[:n]
     y_up = y_up[:n]
+    y_down = y_down[:n]
     X_flat = X.reshape(len(X), -1)
+    up_rate = float(np.mean(y_up))
+    down_rate = float(np.mean(y_down))
+    flat_rate = max(0.0, 1.0 - up_rate - down_rate)
 
     num_episodes = 3 if fast else cfg.rl.episodes
     steps_per_episode = 50 if fast else cfg.rl.steps_per_episode
     hold_penalties = [0.01, 0.1, 0.2]
     histories = []
     labels = []
+    reward_rows = []
 
     for rh in hold_penalties:
         reward_cfg = RewardConfig(
@@ -80,6 +89,19 @@ def run_reward_weights(config_path: str, fast: bool) -> None:
         )
         histories.append(hist)
         labels.append(f"R_hold={rh}")
+        for idx, (reward, hold_rate, grad, delta) in enumerate(
+            zip(hist.rewards, hist.hold_rates, hist.grad_norms, hist.delta_weight_norms)
+        ):
+            reward_rows.append(
+                {
+                    "R_hold": rh,
+                    "episode": idx + 1,
+                    "reward": reward,
+                    "hold_rate": hold_rate,
+                    "grad_norm": grad,
+                    "delta_weight_norm": delta,
+                }
+            )
 
     episodes = np.arange(1, num_episodes + 1)
     report_dir = reports_dir("reward_weights")
@@ -121,10 +143,23 @@ def run_reward_weights(config_path: str, fast: bool) -> None:
         labels=labels,
     )
 
-    summary_lines = ["# Reward vs Weights Summary", ""]
+    pd.DataFrame(reward_rows).to_csv(report_dir / "reward_weights_metrics.csv", index=False)
+
+    summary_lines = [
+        "# Reward vs Weights Summary",
+        f"Symbol: {cfg.symbol}",
+        f"Interval: {cfg.interval}",
+        f"Seed: {cfg.seed}",
+        f"Start ms: {start_ms}",
+        f"End ms: {end_ms}",
+        f"Samples: {len(y_up)}",
+        f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
+        "",
+    ]
     for rh, hist in zip(hold_penalties, histories):
         summary_lines.append(
-            f"R_hold={rh}: final hold_rate={hist.hold_rates[-1]:.4f}, "
+            f"R_hold={rh}: final reward={hist.rewards[-1]:.4f}, "
+            f"final hold_rate={hist.hold_rates[-1]:.4f}, "
             f"final grad_norm={hist.grad_norms[-1]:.4f}, "
             f"final delta_weight_norm={hist.delta_weight_norms[-1]:.4f}"
         )
@@ -137,5 +172,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/mvp.yaml")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--run-dir", default=None)
     args = parser.parse_args()
-    run_reward_weights(args.config, fast=args.fast)
+    run_reward_weights(args.config, fast=args.fast, run_dir=Path(args.run_dir) if args.run_dir else None)
