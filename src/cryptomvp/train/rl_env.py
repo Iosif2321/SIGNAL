@@ -12,6 +12,7 @@ import numpy as np
 class RewardConfig:
     R_correct: float
     R_wrong: float
+    R_opposite: float
     R_hold: float
 
 
@@ -48,9 +49,16 @@ class DirectionEnv:
         curr_idx = self.idx
         label = int(self.y[curr_idx])
         if action == 0:  # direction
-            reward = self.reward.R_correct if label == 1 else -self.reward.R_wrong
+            if label == 1:
+                reward = self.reward.R_correct
+                correct = True
+            elif label == -1:
+                reward = -self.reward.R_opposite
+                correct = False
+            else:
+                reward = -self.reward.R_wrong
+                correct = False
             is_hold = False
-            correct = label == 1
         else:
             reward = -self.reward.R_hold
             is_hold = True
@@ -64,6 +72,7 @@ class DirectionEnv:
             "is_hold": float(is_hold),
             "correct": float(correct),
             "index": float(curr_idx),
+            "label": float(label),
         }
         if self.times is not None:
             info["time_ms"] = float(self.times[curr_idx])

@@ -16,16 +16,21 @@ import pandas as pd
 
 from cryptomvp.config import load_config
 from cryptomvp.data.build_dataset import (
-    build_synthetic_dataset,
     fetch_klines_range,
     save_dataset,
 )
 from cryptomvp.data.validate_dataset import validate_dataset
-from cryptomvp.utils.io import data_dir, reports_dir
+from cryptomvp.utils.io import reports_dir
 from cryptomvp.utils.logging import get_logger
 from cryptomvp.utils.run_dir import init_run_dir
 from cryptomvp.utils.seed import set_seed
 from cryptomvp.viz.plotting import plot_histogram, plot_series_with_band
+
+
+def _load_dataset(path: Path) -> pd.DataFrame:
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path)
 
 
 def run_build_dataset(config_path: str, fast: bool, run_dir: Path | None = None) -> Path:
@@ -35,19 +40,15 @@ def run_build_dataset(config_path: str, fast: bool, run_dir: Path | None = None)
     set_seed(cfg.seed)
 
     interval_ms = int(cfg.interval) * 60_000
-    if fast:
-        start_ms = 0
-        end_ms = interval_ms * 500
-        df = build_synthetic_dataset(start_ms, end_ms, seed=11, interval_ms=interval_ms)
-        output_path = data_dir("processed") / "synthetic.parquet"
-        out = save_dataset(df, output_path)
+    output_path = Path(cfg.dataset.output_path)
+    if fast and output_path.exists():
+        df = _load_dataset(output_path)
+        out = output_path
     else:
         if cfg.dataset.start_ms is None or cfg.dataset.end_ms is None:
             raise RuntimeError("Dataset start_ms/end_ms are required in config.")
 
         from cryptomvp.bybit.rest import BybitRestClient
-        interval_ms = int(cfg.interval) * 60_000
-
         client = BybitRestClient()
         try:
             candles = fetch_klines_range(
@@ -68,7 +69,7 @@ def run_build_dataset(config_path: str, fast: bool, run_dir: Path | None = None)
             (df["open_time_ms"] >= cfg.dataset.start_ms)
             & (df["open_time_ms"] < cfg.dataset.end_ms)
         ].reset_index(drop=True)
-        out = save_dataset(df, Path(cfg.dataset.output_path))
+        out = save_dataset(df, output_path)
 
     report = validate_dataset(df, interval_ms=interval_ms)
     report_dir = reports_dir("dataset")

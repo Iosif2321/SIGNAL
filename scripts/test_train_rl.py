@@ -16,9 +16,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from cryptomvp.config import load_config
-from cryptomvp.data.build_dataset import build_synthetic_dataset
 from cryptomvp.data.features import compute_features
-from cryptomvp.data.labels import make_up_down_labels
+from cryptomvp.data.labels import make_directional_labels, make_up_down_labels
+from cryptomvp.data.scaling import apply_standard_scaler, fit_standard_scaler
 from cryptomvp.data.windowing import make_windows
 from cryptomvp.train.feature_importance import compute_feature_importance
 from cryptomvp.train.rl_env import RewardConfig
@@ -51,46 +51,54 @@ def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
     logger = get_logger("rl")
     set_seed(cfg.seed)
 
-    if fast:
-        interval_ms = int(cfg.interval) * 60_000
-        df = build_synthetic_dataset(0, interval_ms * 800, seed=21, interval_ms=interval_ms)
-    else:
-        df = _load_dataset(Path(cfg.dataset.output_path))
+    dataset_path = Path(cfg.dataset.output_path)
+    if not dataset_path.exists():
+        raise RuntimeError(
+            f"Dataset not found at {dataset_path}. Run scripts/test_build_dataset.py first."
+        )
+    df = _load_dataset(dataset_path)
     start_ms = int(df["open_time_ms"].min())
     end_ms = int(df["open_time_ms"].max())
 
     features = compute_features(df, cfg.features.list_of_features)
     X, window_times, feature_cols = make_windows(features, cfg.features.window_size_K)
     y_up, y_down = make_up_down_labels(df, window_times)
+    y_up_dir, y_down_dir = make_directional_labels(df, window_times)
 
-    n = min(len(X), len(y_up))
+    n = min(len(X), len(y_up_dir))
     X = X[:n]
     y_up = y_up[:n]
     y_down = y_down[:n]
+    y_up_dir = y_up_dir[:n]
+    y_down_dir = y_down_dir[:n]
     up_rate = float(np.mean(y_up))
     down_rate = float(np.mean(y_down))
     flat_rate = max(0.0, 1.0 - up_rate - down_rate)
 
     X_flat = X.reshape(len(X), -1)
     times = window_times[:n]
+    scaler_mean, scaler_std = fit_standard_scaler(X_flat)
+    X_flat = apply_standard_scaler(X_flat, scaler_mean, scaler_std)
     num_episodes = 3 if fast else cfg.rl.episodes
     steps_per_episode = 50 if fast else cfg.rl.steps_per_episode
 
     reward_cfg = RewardConfig(
         R_correct=cfg.rl.reward.R_correct,
         R_wrong=cfg.rl.reward.R_wrong,
+        R_opposite=cfg.rl.reward.R_opposite,
         R_hold=cfg.rl.reward.R_hold,
     )
 
     # UP policy
     up_policy, up_hist = train_reinforce(
         X_flat,
-        y_up,
+        y_up_dir,
         episodes=num_episodes,
         steps_per_episode=steps_per_episode,
         lr=cfg.rl.lr,
         gamma=cfg.rl.gamma,
         reward_cfg=reward_cfg,
+        policy_hidden_dim=cfg.rl.policy_hidden_dim,
         entropy_bonus=cfg.rl.entropy_bonus,
         seed=7,
         track_diagnostics=True,
@@ -103,6 +111,12 @@ def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
     up_report = reports_dir("rl_up")
     up_fig = up_report / "figures"
     up_fig.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        up_report / "feature_scaler.npz",
+        mean=scaler_mean,
+        std=scaler_std,
+        feature_cols=np.array(feature_cols, dtype=object),
+    )
     episode_idx = np.arange(1, len(up_hist.rewards) + 1)
 
     plot_series_with_band(
@@ -193,10 +207,13 @@ def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
                 f"End ms: {end_ms}",
                 f"Samples: {len(y_up)}",
                 f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
+                "Feature scaling: standard (global mean/std)",
                 f"R_correct: {cfg.rl.reward.R_correct}",
                 f"R_wrong: {cfg.rl.reward.R_wrong}",
+                f"R_opposite: {cfg.rl.reward.R_opposite}",
                 f"R_hold: {cfg.rl.reward.R_hold}",
                 f"Entropy bonus: {cfg.rl.entropy_bonus}",
+                f"Policy hidden_dim: {cfg.rl.policy_hidden_dim}",
                 f"Final reward: {up_hist.rewards[-1]:.4f}",
                 f"Final hold_rate: {up_hist.hold_rates[-1]:.4f}",
                 f"Final accuracy: {up_hist.accuracies[-1]:.4f}",
@@ -221,12 +238,13 @@ def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
     # DOWN policy
     down_policy, down_hist = train_reinforce(
         X_flat,
-        y_down,
+        y_down_dir,
         episodes=num_episodes,
         steps_per_episode=steps_per_episode,
         lr=cfg.rl.lr,
         gamma=cfg.rl.gamma,
         reward_cfg=reward_cfg,
+        policy_hidden_dim=cfg.rl.policy_hidden_dim,
         entropy_bonus=cfg.rl.entropy_bonus,
         seed=13,
         track_diagnostics=True,
@@ -239,6 +257,12 @@ def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
     down_report = reports_dir("rl_down")
     down_fig = down_report / "figures"
     down_fig.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        down_report / "feature_scaler.npz",
+        mean=scaler_mean,
+        std=scaler_std,
+        feature_cols=np.array(feature_cols, dtype=object),
+    )
     episode_idx = np.arange(1, len(down_hist.rewards) + 1)
 
     plot_series_with_band(
@@ -329,10 +353,13 @@ def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
                 f"End ms: {end_ms}",
                 f"Samples: {len(y_down)}",
                 f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
+                "Feature scaling: standard (global mean/std)",
                 f"R_correct: {cfg.rl.reward.R_correct}",
                 f"R_wrong: {cfg.rl.reward.R_wrong}",
+                f"R_opposite: {cfg.rl.reward.R_opposite}",
                 f"R_hold: {cfg.rl.reward.R_hold}",
                 f"Entropy bonus: {cfg.rl.entropy_bonus}",
+                f"Policy hidden_dim: {cfg.rl.policy_hidden_dim}",
                 f"Final reward: {down_hist.rewards[-1]:.4f}",
                 f"Final hold_rate: {down_hist.hold_rates[-1]:.4f}",
                 f"Final accuracy: {down_hist.accuracies[-1]:.4f}",

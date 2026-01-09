@@ -134,8 +134,10 @@ Thumbs.db
 # Project specific
 data/raw/
 data/processed/
-# runs/
+runs/
 *.pt
 *.pth
 .wandb/
 outputs/
+*.svg
+*.log

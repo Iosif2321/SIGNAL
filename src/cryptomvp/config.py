@@ -42,12 +42,15 @@ class SupervisedConfig:
     batch_size: int
     lr: float
     early_stopping_patience: int
+    weight_decay: float
+    hidden_dim: int
 
 
 @dataclass(frozen=True)
 class RewardConfig:
     R_correct: float
     R_wrong: float
+    R_opposite: float
     R_hold: float
 
 
@@ -59,11 +62,15 @@ class RLConfig:
     lr: float
     reward: RewardConfig
     entropy_bonus: float
+    policy_hidden_dim: int
 
 
 @dataclass(frozen=True)
 class DecisionRuleConfig:
     T_min: float
+    delta_min: float
+    delta_grid: List[float]
+    use_best_from_scan: bool
     scan_min: float
     scan_max: float
     scan_step: float
@@ -74,6 +81,65 @@ class VizConfig:
     out_dir: str
     moving_window: int
     save_formats: List[str]
+
+
+@dataclass(frozen=True)
+class TunerRewardConfig:
+    decision_accuracy_weight: float
+    decision_action_rate_weight: float
+    decision_conflict_penalty: float
+    decision_hold_penalty: float
+    rl_up_accuracy_weight: float
+    rl_down_accuracy_weight: float
+    rl_up_hold_penalty: float
+    rl_down_hold_penalty: float
+    improve_up_accuracy_weight: float
+    improve_down_accuracy_weight: float
+
+
+@dataclass(frozen=True)
+class TunerCandidateConfig:
+    name: str
+    features: List[str]
+    T_min: float
+    delta_min: float
+    lr: float
+    weight_decay: float
+    hidden_dim: int
+
+
+@dataclass(frozen=True)
+class TunerSearchConfig:
+    explore_prob: float
+    mutate_prob: float
+    max_mutations: int
+    neighbor_only: bool
+    always_mutate: bool
+
+
+@dataclass(frozen=True)
+class TunerConfig:
+    episodes: int
+    entropy_bonus: float
+    lr: float
+    reward: TunerRewardConfig
+    param_space: Dict[str, List[Any]]
+    candidates: Optional[List[TunerCandidateConfig]]
+    search: TunerSearchConfig
+
+
+@dataclass(frozen=True)
+class AdaptationConfig:
+    min_action_accuracy: Optional[float]
+    min_action_rate: Optional[float]
+    max_hold_rate: Optional[float]
+    max_conflict_rate: Optional[float]
+    min_precision_up: Optional[float]
+    min_precision_down: Optional[float]
+    min_rl_up_accuracy: Optional[float]
+    min_rl_down_accuracy: Optional[float]
+    max_rl_up_hold_rate: Optional[float]
+    max_rl_down_hold_rate: Optional[float]
 
 
 @dataclass(frozen=True)
@@ -89,6 +155,8 @@ class Config:
     rl: RLConfig
     decision_rule: DecisionRuleConfig
     viz: VizConfig
+    tuner: Optional[TunerConfig]
+    adaptation: Optional[AdaptationConfig]
 
 
 def _parse_date_to_ms(date_str: str) -> int:
@@ -100,6 +168,12 @@ def _maybe_date_to_ms(date_str: Optional[str]) -> Optional[int]:
     if date_str is None:
         return None
     return _parse_date_to_ms(date_str)
+
+
+def _maybe_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    return float(value)
 
 
 def load_config(path: str | Path) -> Config:
@@ -154,15 +228,25 @@ def load_config(path: str | Path) -> Config:
         batch_size=int(data["supervised"]["batch_size"]),
         lr=float(data["supervised"]["lr"]),
         early_stopping_patience=int(data["supervised"]["early_stopping_patience"]),
+        weight_decay=float(data["supervised"].get("weight_decay", 0.0)),
+        hidden_dim=int(data["supervised"].get("hidden_dim", 64)),
     )
 
     reward_cfg = RewardConfig(
         R_correct=float(data["rl"]["reward"]["R_correct"]),
         R_wrong=float(data["rl"]["reward"]["R_wrong"]),
+        R_opposite=float(data["rl"]["reward"].get("R_opposite", data["rl"]["reward"]["R_wrong"])),
         R_hold=float(data["rl"]["reward"]["R_hold"]),
     )
-    if reward_cfg.R_correct <= 0 or reward_cfg.R_wrong <= 0 or reward_cfg.R_hold <= 0:
-        raise ValueError("Reward config values must be positive (R_correct/R_wrong/R_hold).")
+    if (
+        reward_cfg.R_correct <= 0
+        or reward_cfg.R_wrong <= 0
+        or reward_cfg.R_opposite <= 0
+        or reward_cfg.R_hold <= 0
+    ):
+        raise ValueError(
+            "Reward config values must be positive (R_correct/R_wrong/R_opposite/R_hold)."
+        )
 
     rl_cfg = RLConfig(
         episodes=int(data["rl"]["episodes"]),
@@ -171,12 +255,19 @@ def load_config(path: str | Path) -> Config:
         lr=float(data["rl"]["lr"]),
         reward=reward_cfg,
         entropy_bonus=float(data["rl"]["entropy_bonus"]),
+        policy_hidden_dim=int(data["rl"].get("policy_hidden_dim", 64)),
     )
     if rl_cfg.entropy_bonus < 0:
         raise ValueError("entropy_bonus must be non-negative.")
 
     decision_cfg = DecisionRuleConfig(
         T_min=float(data["decision_rule"]["T_min"]),
+        delta_min=float(data["decision_rule"].get("delta_min", 0.0)),
+        delta_grid=[
+            float(val)
+            for val in data["decision_rule"].get("delta_grid", [data["decision_rule"].get("delta_min", 0.0)])
+        ],
+        use_best_from_scan=bool(data["decision_rule"].get("use_best_from_scan", True)),
         scan_min=float(data["decision_rule"].get("scan_min", 0.45)),
         scan_max=float(data["decision_rule"].get("scan_max", 0.75)),
         scan_step=float(data["decision_rule"].get("scan_step", 0.01)),
@@ -187,6 +278,81 @@ def load_config(path: str | Path) -> Config:
         moving_window=int(data["viz"]["moving_window"]),
         save_formats=list(data["viz"]["save_formats"]),
     )
+
+    tuner_cfg = None
+    if "tuner" in data:
+        tuner = data["tuner"]
+        reward_cfg = TunerRewardConfig(
+            decision_accuracy_weight=float(tuner["reward"]["decision_accuracy_weight"]),
+            decision_action_rate_weight=float(tuner["reward"]["decision_action_rate_weight"]),
+            decision_conflict_penalty=float(tuner["reward"]["decision_conflict_penalty"]),
+            decision_hold_penalty=float(tuner["reward"]["decision_hold_penalty"]),
+            rl_up_accuracy_weight=float(tuner["reward"].get("rl_up_accuracy_weight", 0.0)),
+            rl_down_accuracy_weight=float(tuner["reward"].get("rl_down_accuracy_weight", 0.0)),
+            rl_up_hold_penalty=float(tuner["reward"].get("rl_up_hold_penalty", 0.0)),
+            rl_down_hold_penalty=float(tuner["reward"].get("rl_down_hold_penalty", 0.0)),
+            improve_up_accuracy_weight=float(
+                tuner["reward"].get("improve_up_accuracy_weight", 0.0)
+            ),
+            improve_down_accuracy_weight=float(
+                tuner["reward"].get("improve_down_accuracy_weight", 0.0)
+            ),
+        )
+        candidates = None
+        if "candidates" in tuner:
+            cand_list: List[TunerCandidateConfig] = []
+            for cand in tuner["candidates"]:
+                cand_list.append(
+                    TunerCandidateConfig(
+                        name=str(cand.get("name", "candidate")),
+                        features=list(cand["features"]),
+                        T_min=float(cand["T_min"]),
+                        delta_min=float(cand.get("delta_min", 0.0)),
+                        lr=float(cand.get("lr", data["supervised"]["lr"])),
+                        weight_decay=float(cand.get("weight_decay", data["supervised"].get("weight_decay", 0.0))),
+                        hidden_dim=int(cand.get("hidden_dim", 64)),
+                    )
+                )
+            candidates = cand_list
+        param_space: Dict[str, List[Any]] = {}
+        for key, values in tuner.get("param_space", {}).items():
+            if isinstance(values, list):
+                param_space[str(key)] = list(values)
+            else:
+                param_space[str(key)] = [values]
+        search = tuner.get("search", {})
+        search_cfg = TunerSearchConfig(
+            explore_prob=float(search.get("explore_prob", 0.1)),
+            mutate_prob=float(search.get("mutate_prob", 0.5)),
+            max_mutations=int(search.get("max_mutations", 2)),
+            neighbor_only=bool(search.get("neighbor_only", False)),
+            always_mutate=bool(search.get("always_mutate", True)),
+        )
+        tuner_cfg = TunerConfig(
+            episodes=int(tuner["episodes"]),
+            entropy_bonus=float(tuner.get("entropy_bonus", 0.0)),
+            lr=float(tuner.get("lr", 0.1)),
+            reward=reward_cfg,
+            param_space=param_space,
+            candidates=candidates,
+            search=search_cfg,
+        )
+
+    adaptation_cfg = None
+    if "adaptation" in data:
+        adapt = data["adaptation"]
+        adaptation_cfg = AdaptationConfig(
+            min_action_accuracy=_maybe_float(adapt.get("min_action_accuracy")),
+            min_action_rate=_maybe_float(adapt.get("min_action_rate")),
+            max_hold_rate=_maybe_float(adapt.get("max_hold_rate")),
+            max_conflict_rate=_maybe_float(adapt.get("max_conflict_rate")),
+            min_precision_up=_maybe_float(adapt.get("min_precision_up")),
+            min_precision_down=_maybe_float(adapt.get("min_precision_down")),
+            min_rl_up_accuracy=_maybe_float(adapt.get("min_rl_up_accuracy")),
+            min_rl_down_accuracy=_maybe_float(adapt.get("min_rl_down_accuracy")),
+            max_rl_up_hold_rate=_maybe_float(adapt.get("max_rl_up_hold_rate")),
+            max_rl_down_hold_rate=_maybe_float(adapt.get("max_rl_down_hold_rate")),
+        )
 
     return Config(
         symbol=str(data["symbol"]),
@@ -200,6 +366,8 @@ def load_config(path: str | Path) -> Config:
         rl=rl_cfg,
         decision_rule=decision_cfg,
         viz=viz_cfg,
+        tuner=tuner_cfg,
+        adaptation=adaptation_cfg,
     )
 
 

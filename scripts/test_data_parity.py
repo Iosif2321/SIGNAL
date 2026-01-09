@@ -18,7 +18,7 @@ import pandas as pd
 
 from cryptomvp.bybit.schemas import KlineCandle
 from cryptomvp.config import load_config
-from cryptomvp.data.build_dataset import build_synthetic_dataset, klines_to_dataframe
+from cryptomvp.data.build_dataset import klines_to_dataframe
 from cryptomvp.utils.io import data_dir, reports_dir
 from cryptomvp.utils.logging import get_logger
 from cryptomvp.utils.run_dir import init_run_dir
@@ -65,68 +65,37 @@ def run_parity(config_path: str, fast: bool, run_dir: Path | None = None) -> Non
     max_wait_sec = cfg.parity.max_wait_sec
 
     if fast:
-        start_ms = 0
-        end_ms = interval_ms * target_candles
-        ws_df = build_synthetic_dataset(start_ms, end_ms, seed=7, interval_ms=interval_ms)
-        rest_df = ws_df.copy()
-        rest_df["close"] = rest_df["close"] + np.random.normal(0, 0.5, size=len(rest_df))
-        ws_candles = [
-            KlineCandle(
-                open_time_ms=int(row.open_time_ms),
-                open=float(row.open),
-                high=float(row.high),
-                low=float(row.low),
-                close=float(row.close),
-                volume=float(row.volume),
-                turnover=float(row.turnover),
-                confirm=True,
-                source="ws",
-            )
-            for row in ws_df.itertuples()
-        ]
-        rest_candles = [
-            KlineCandle(
-                open_time_ms=int(row.open_time_ms),
-                open=float(row.open),
-                high=float(row.high),
-                low=float(row.low),
-                close=float(row.close),
-                volume=float(row.volume),
-                turnover=float(row.turnover),
-                source="rest",
-            )
-            for row in rest_df.itertuples()
-        ]
-    else:
-        topic = cfg.parity.ws_topic
-        from cryptomvp.bybit.ws import collect_klines_sync
+        target_candles = min(target_candles, 3)
 
-        ws_candles = collect_klines_sync(
-            topic=topic,
-            target_candles=target_candles,
-            max_wait_sec=max_wait_sec,
+    topic = cfg.parity.ws_topic
+    from cryptomvp.bybit.ws import collect_klines_sync
+
+    ws_candles = collect_klines_sync(
+        topic=topic,
+        target_candles=target_candles,
+        max_wait_sec=max_wait_sec,
+    )
+    if not ws_candles:
+        raise RuntimeError("No WS candles collected.")
+    ws_df = klines_to_dataframe(ws_candles)
+    start_ms = int(ws_df["open_time_ms"].min())
+    end_ms = int(ws_df["open_time_ms"].max()) + interval_ms
+
+    from cryptomvp.bybit.rest import BybitRestClient
+
+    client = BybitRestClient()
+    try:
+        rest_candles = client.get_klines(
+            category=cfg.category,
+            symbol=cfg.symbol,
+            interval=cfg.interval,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            limit=cfg.dataset.limit_per_call,
         )
-        if not ws_candles:
-            raise RuntimeError("No WS candles collected.")
-        ws_df = klines_to_dataframe(ws_candles)
-        start_ms = int(ws_df["open_time_ms"].min())
-        end_ms = int(ws_df["open_time_ms"].max()) + interval_ms
-
-        from cryptomvp.bybit.rest import BybitRestClient
-
-        client = BybitRestClient()
-        try:
-            rest_candles = client.get_klines(
-                category=cfg.category,
-                symbol=cfg.symbol,
-                interval=cfg.interval,
-                start_ms=start_ms,
-                end_ms=end_ms,
-                limit=cfg.dataset.limit_per_call,
-            )
-        finally:
-            client.close()
-        rest_df = klines_to_dataframe(rest_candles)
+    finally:
+        client.close()
+    rest_df = klines_to_dataframe(rest_candles)
 
     data_dir("raw", "parity")
     _write_jsonl(data_dir("raw", "parity") / "ws_klines.jsonl", ws_candles)

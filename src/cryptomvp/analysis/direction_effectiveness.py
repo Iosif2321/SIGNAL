@@ -59,6 +59,7 @@ class AnalysisInputs:
     run_dir: Path
     out_dir: Path
     threshold: float
+    delta_min: float
     rolling_window: int
     formats: Sequence[str]
     scan_thresholds: bool
@@ -318,11 +319,12 @@ def analyze_supervised(
 
 
 def _decision_rule_from_probs(
-    p_up: np.ndarray, p_down: np.ndarray, threshold: float
+    p_up: np.ndarray, p_down: np.ndarray, threshold: float, delta_min: float
 ) -> np.ndarray:
     decision = np.full(len(p_up), "HOLD", dtype=object)
     max_prob = np.maximum(p_up, p_down)
-    take = max_prob >= threshold
+    diff = np.abs(p_up - p_down)
+    take = (max_prob >= threshold) & (diff >= delta_min)
     direction = np.where(p_up >= p_down, "UP", "DOWN")
     decision[take] = direction[take]
     return decision
@@ -338,6 +340,7 @@ def analyze_decision_rule(
     t_min: float,
     t_max: float,
     t_step: float,
+    delta_min: float,
 ) -> Dict[str, float]:
     """Analyze combined decision rule logs."""
     p_up_col = infer_column(df, ["p_up", "prob_up", "up_prob"], "p_up")
@@ -352,7 +355,7 @@ def analyze_decision_rule(
     if decision_col is not None:
         decision = _normalize_direction(df[decision_col])
     else:
-        decision = pd.Series(_decision_rule_from_probs(p_up, p_down, threshold))
+        decision = pd.Series(_decision_rule_from_probs(p_up, p_down, threshold, delta_min))
 
     is_hold = decision.eq("HOLD")
     hold_rate = float(is_hold.mean())
@@ -413,7 +416,7 @@ def analyze_decision_rule(
             true_dir = _normalize_direction(df[true_col])
 
         for t in thresholds:
-            decisions = _decision_rule_from_probs(p_up, p_down, t)
+            decisions = _decision_rule_from_probs(p_up, p_down, t, delta_min)
             decisions = pd.Series(decisions)
             holds = decisions.eq("HOLD")
             hold_rates.append(float(holds.mean()))
@@ -609,6 +612,7 @@ def write_summary_md(
     lines.append("## Inputs")
     lines.append(f"- run_dir: {inputs.run_dir}")
     lines.append(f"- threshold: {inputs.threshold:.4f}")
+    lines.append(f"- delta_min: {inputs.delta_min:.4f}")
     lines.append(f"- rolling_window: {inputs.rolling_window}")
     lines.append(f"- scan_thresholds: {inputs.scan_thresholds}")
     if inputs.scan_thresholds:
@@ -685,6 +689,7 @@ def analyze_run(inputs: AnalysisInputs) -> Path:
             t_min=inputs.t_min,
             t_max=inputs.t_max,
             t_step=inputs.t_step,
+            delta_min=inputs.delta_min,
         )
         metrics_rows.append(decision_metrics)
         notes.append(

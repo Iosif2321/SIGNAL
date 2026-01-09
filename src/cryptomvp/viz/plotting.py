@@ -206,3 +206,32 @@ def plot_threshold_scan(
         out_base=out_base,
         formats=formats,
     )
+
+
+def plot_heatmap(
+    values: np.ndarray,
+    x_labels: Sequence[float],
+    y_labels: Sequence[float],
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    out_base: Path,
+    formats: Iterable[str],
+    fmt: str = ".3f",
+) -> None:
+    apply_style()
+    fig, ax = plt.subplots()
+    im = ax.imshow(values, aspect="auto", origin="lower", cmap="viridis")
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_xticks(np.arange(len(x_labels)))
+    ax.set_yticks(np.arange(len(y_labels)))
+    ax.set_xticklabels([f"{val:.3f}" for val in x_labels])
+    ax.set_yticklabels([f"{val:.3f}" for val in y_labels])
+    for i in range(values.shape[0]):
+        for j in range(values.shape[1]):
+            ax.text(j, i, format(values[i, j], fmt), ha="center", va="center", color="black")
+    fig.colorbar(im, ax=ax)
+    save_figure(fig, out_base, formats)
+    plt.close(fig)

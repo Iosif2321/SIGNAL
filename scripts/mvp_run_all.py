@@ -21,6 +21,7 @@ def run_all(fast: bool, run_dir: str | None) -> Path:
         "scripts/test_data_parity.py",
         "scripts/test_build_dataset.py",
         "scripts/test_train_baseline.py",
+        "scripts/test_rl_tuner.py",
         "scripts/test_train_rl.py",
         "scripts/test_reward_weights.py",
     ]

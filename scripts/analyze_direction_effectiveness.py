@@ -35,6 +35,7 @@ def main() -> None:
     parser.add_argument("--run", required=True)
     parser.add_argument("--config", default="configs/mvp.yaml")
     parser.add_argument("--threshold", type=float, default=None)
+    parser.add_argument("--delta-min", type=float, default=None)
     parser.add_argument("--rolling-window", type=int, default=None)
     parser.add_argument("--scan-thresholds", action="store_true")
     parser.add_argument("--t-min", type=float, default=0.45)
@@ -48,6 +49,7 @@ def main() -> None:
     cfg = load_config(args.config)
 
     threshold = args.threshold if args.threshold is not None else cfg.decision_rule.T_min
+    delta_min = args.delta_min if args.delta_min is not None else cfg.decision_rule.delta_min
     rolling_window = args.rolling_window if args.rolling_window is not None else cfg.viz.moving_window
     out_dir = Path(args.out) if args.out else run_dir / "reports/direction_effectiveness"
 
@@ -63,6 +65,7 @@ def main() -> None:
         run_dir=run_dir,
         out_dir=out_dir,
         threshold=threshold,
+        delta_min=delta_min,
         rolling_window=rolling_window,
         formats=cfg.viz.save_formats,
         scan_thresholds=args.scan_thresholds,

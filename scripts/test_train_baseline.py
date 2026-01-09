@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Tuple
@@ -16,9 +17,9 @@ import numpy as np
 import pandas as pd
 
 from cryptomvp.config import load_config
-from cryptomvp.data.build_dataset import build_synthetic_dataset
 from cryptomvp.data.features import compute_features
 from cryptomvp.data.labels import make_up_down_labels
+from cryptomvp.data.scaling import apply_standard_scaler, fit_standard_scaler
 from cryptomvp.data.windowing import make_windows
 from cryptomvp.decision.rule import batch_decide, hold_rate, scan_thresholds
 from cryptomvp.models.down_model import DownModel
@@ -34,9 +35,11 @@ from cryptomvp.viz.plotting import (
     plot_bar,
     plot_confusion_matrix,
     plot_histogram,
+    plot_heatmap,
     plot_series_with_band,
     plot_threshold_scan,
 )
+from cryptomvp.analysis.adaptation import assess_adaptation
 
 
 def _load_dataset(path: Path) -> pd.DataFrame:
@@ -99,11 +102,12 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
     logger = get_logger("supervised")
     set_seed(cfg.seed)
 
-    if fast:
-        interval_ms = int(cfg.interval) * 60_000
-        df = build_synthetic_dataset(0, interval_ms * 800, seed=17, interval_ms=interval_ms)
-    else:
-        df = _load_dataset(Path(cfg.dataset.output_path))
+    dataset_path = Path(cfg.dataset.output_path)
+    if not dataset_path.exists():
+        raise RuntimeError(
+            f"Dataset not found at {dataset_path}. Run scripts/test_build_dataset.py first."
+        )
+    df = _load_dataset(dataset_path)
     start_ms = int(df["open_time_ms"].min())
     end_ms = int(df["open_time_ms"].max())
 
@@ -125,20 +129,22 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
     n_total = len(X_flat)
     train_end = int(n_total * 0.7)
     val_end = int(n_total * 0.85)
+    scaler_mean, scaler_std = fit_standard_scaler(X_flat[:train_end])
+    X_flat_scaled = apply_standard_scaler(X_flat, scaler_mean, scaler_std)
 
     y_up_test = y_up[val_end:]
     y_down_test = y_down[val_end:]
     up_rate = float(np.mean(y_up_test))
     down_rate = float(np.mean(y_down_test))
     flat_rate = max(0.0, 1.0 - up_rate - down_rate)
-    Xtr, ytr = X_flat[:train_end], y_up[:train_end]
-    Xv, yv = X_flat[train_end:val_end], y_up[train_end:val_end]
-    Xte, yte = X_flat[val_end:], y_up_test
+    Xtr, ytr = X_flat_scaled[:train_end], y_up[:train_end]
+    Xv, yv = X_flat_scaled[train_end:val_end], y_up[train_end:val_end]
+    Xte, yte = X_flat_scaled[val_end:], y_up_test
     times_te = window_times[val_end:]
     X_window_te = X[val_end:]
 
     # UP model
-    up_model = UpModel(input_dim=Xtr.shape[1])
+    up_model = UpModel(input_dim=Xtr.shape[1], hidden_dim=cfg.supervised.hidden_dim)
     up_hist = train_supervised(
         up_model,
         Xtr,
@@ -149,6 +155,7 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
         batch_size=batch_size,
         lr=cfg.supervised.lr,
         patience=cfg.supervised.early_stopping_patience,
+        weight_decay=cfg.supervised.weight_decay,
         model_name="baseline_up",
         track_weights=True,
     )
@@ -157,6 +164,12 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
     up_report_dir = reports_dir("supervised_up")
     up_fig_dir = up_report_dir / "figures"
     up_fig_dir.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        up_report_dir / "feature_scaler.npz",
+        mean=scaler_mean,
+        std=scaler_std,
+        feature_cols=np.array(feature_cols, dtype=object),
+    )
 
     epoch_idx = np.arange(1, len(up_hist.train_loss) + 1)
     plot_series_with_band(
@@ -243,6 +256,10 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
                 f"Test samples: {len(y_up_test)}",
                 f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
                 f"Threshold: {cfg.decision_rule.T_min}",
+                "Feature scaling: standard (train mean/std)",
+                f"Weight decay: {cfg.supervised.weight_decay}",
+                f"Hidden dim: {cfg.supervised.hidden_dim}",
+                f"Early stopping patience: {cfg.supervised.early_stopping_patience}",
                 f"Accuracy: {up_eval['accuracy']:.4f}",
                 f"F1: {up_eval['f1']:.4f}",
                 f"Final weight_norm: {up_hist.weight_norms[-1]:.4f}",
@@ -280,10 +297,10 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
     )
 
     # DOWN model
-    Xtr, ytr = X_flat[:train_end], y_down[:train_end]
-    Xv, yv = X_flat[train_end:val_end], y_down[train_end:val_end]
-    Xte, yte = X_flat[val_end:], y_down_test
-    down_model = DownModel(input_dim=Xtr.shape[1])
+    Xtr, ytr = X_flat_scaled[:train_end], y_down[:train_end]
+    Xv, yv = X_flat_scaled[train_end:val_end], y_down[train_end:val_end]
+    Xte, yte = X_flat_scaled[val_end:], y_down_test
+    down_model = DownModel(input_dim=Xtr.shape[1], hidden_dim=cfg.supervised.hidden_dim)
     down_hist = train_supervised(
         down_model,
         Xtr,
@@ -294,6 +311,7 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
         batch_size=batch_size,
         lr=cfg.supervised.lr,
         patience=cfg.supervised.early_stopping_patience,
+        weight_decay=cfg.supervised.weight_decay,
         model_name="baseline_down",
         track_weights=True,
     )
@@ -302,6 +320,12 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
     down_report_dir = reports_dir("supervised_down")
     down_fig_dir = down_report_dir / "figures"
     down_fig_dir.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        down_report_dir / "feature_scaler.npz",
+        mean=scaler_mean,
+        std=scaler_std,
+        feature_cols=np.array(feature_cols, dtype=object),
+    )
 
     epoch_idx = np.arange(1, len(down_hist.train_loss) + 1)
     plot_series_with_band(
@@ -388,6 +412,10 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
                 f"Test samples: {len(y_down_test)}",
                 f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
                 f"Threshold: {cfg.decision_rule.T_min}",
+                "Feature scaling: standard (train mean/std)",
+                f"Weight decay: {cfg.supervised.weight_decay}",
+                f"Hidden dim: {cfg.supervised.hidden_dim}",
+                f"Early stopping patience: {cfg.supervised.early_stopping_patience}",
                 f"Accuracy: {down_eval['accuracy']:.4f}",
                 f"F1: {down_eval['f1']:.4f}",
                 f"Final weight_norm: {down_hist.weight_norms[-1]:.4f}",
@@ -433,23 +461,8 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
         cfg.decision_rule.scan_max + cfg.decision_rule.scan_step / 2,
         cfg.decision_rule.scan_step,
     )
-    hold_rates = scan_thresholds(p_up, p_down, thresholds)
-    default_decisions = batch_decide(p_up, p_down, cfg.decision_rule.T_min)
-    default_hold_rate = hold_rate(default_decisions)
-    conflict_rate = float(np.mean((p_up >= cfg.decision_rule.T_min) & (p_down >= cfg.decision_rule.T_min)))
-    rule_dir = reports_dir("decision_rule")
-    rule_fig_dir = rule_dir / "figures"
-    rule_fig_dir.mkdir(parents=True, exist_ok=True)
-    plot_threshold_scan(
-        thresholds,
-        hold_rates,
-        window=cfg.viz.moving_window,
-        title="Hold Rate vs Threshold",
-        out_base=rule_fig_dir / "hold_rate_threshold",
-        formats=cfg.viz.save_formats,
-    )
+    delta_values = cfg.decision_rule.delta_grid or [cfg.decision_rule.delta_min]
 
-    decisions = batch_decide(p_up, p_down, cfg.decision_rule.T_min)
     true_dir = []
     for up_val, down_val in zip(y_up_test[:n_test], y_down_test[:n_test]):
         if up_val == 1:
@@ -458,10 +471,135 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
             true_dir.append("DOWN")
         else:
             true_dir.append("FLAT")
+
+    grid_rows = []
+    best_score = -float("inf")
+    best_row = None
+    for delta in delta_values:
+        hold_rates = scan_thresholds(p_up, p_down, thresholds, delta_min=delta)
+        for t, hold_val in zip(thresholds, hold_rates):
+            decisions = batch_decide(p_up, p_down, float(t), delta_min=float(delta))
+            action_mask = np.array([d != "HOLD" for d in decisions])
+            action_rate = float(np.mean(action_mask))
+            conflict_rate = float(np.mean((p_up >= t) & (p_down >= t)))
+            if action_mask.any():
+                action_accuracy = float(
+                    np.mean([d == tr for d, tr in zip(decisions, true_dir) if d != "HOLD"])
+                )
+            else:
+                action_accuracy = 0.0
+            precision_up = float(
+                np.mean([tval == "UP" for tval, d in zip(true_dir, decisions) if d == "UP"])
+            ) if any(d == "UP" for d in decisions) else 0.0
+            precision_down = float(
+                np.mean([tval == "DOWN" for tval, d in zip(true_dir, decisions) if d == "DOWN"])
+            ) if any(d == "DOWN" for d in decisions) else 0.0
+            score = action_accuracy * action_rate * (1.0 - conflict_rate)
+            row = {
+                "threshold": float(t),
+                "delta_min": float(delta),
+                "hold_rate": float(hold_val),
+                "action_rate": float(action_rate),
+                "action_accuracy_non_hold": float(action_accuracy),
+                "conflict_rate": float(conflict_rate),
+                "precision_up": float(precision_up),
+                "precision_down": float(precision_down),
+                "score": float(score),
+            }
+            grid_rows.append(row)
+            if score > best_score:
+                best_score = score
+                best_row = row
+
+    if best_row is None:
+        best_row = {
+            "threshold": cfg.decision_rule.T_min,
+            "delta_min": cfg.decision_rule.delta_min,
+            "score": 0.0,
+        }
+
+    best_threshold = float(best_row["threshold"])
+    best_delta = float(best_row["delta_min"])
+    use_best = cfg.decision_rule.use_best_from_scan
+    chosen_threshold = best_threshold if use_best else cfg.decision_rule.T_min
+    chosen_delta = best_delta if use_best else cfg.decision_rule.delta_min
+
+    rule_dir = reports_dir("decision_rule")
+    rule_fig_dir = rule_dir / "figures"
+    rule_fig_dir.mkdir(parents=True, exist_ok=True)
+
+    grid_df = pd.DataFrame(grid_rows)
+    grid_df.to_csv(rule_dir / "threshold_delta_scan.csv", index=False)
+    (rule_dir / "best_params.json").write_text(
+        json.dumps(
+            {
+                "best_threshold": best_threshold,
+                "best_delta_min": best_delta,
+                "best_score": best_score,
+                "default_threshold": cfg.decision_rule.T_min,
+                "default_delta_min": cfg.decision_rule.delta_min,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    score_matrix = (
+        grid_df.pivot(index="delta_min", columns="threshold", values="score")
+        .reindex(index=delta_values, columns=thresholds)
+        .to_numpy()
+    )
+    plot_heatmap(
+        score_matrix,
+        x_labels=thresholds,
+        y_labels=delta_values,
+        title="Decision Rule Score Heatmap",
+        xlabel="Threshold (T_min)",
+        ylabel="Delta min",
+        out_base=rule_fig_dir / "threshold_delta_score",
+        formats=cfg.viz.save_formats,
+    )
+
+    best_scan = grid_df[grid_df["delta_min"] == best_delta].sort_values("threshold")
+    plot_threshold_scan(
+        best_scan["threshold"].to_numpy(),
+        best_scan["hold_rate"].to_numpy(),
+        window=cfg.viz.moving_window,
+        title="Hold Rate vs Threshold (best delta)",
+        out_base=rule_fig_dir / "hold_rate_threshold",
+        formats=cfg.viz.save_formats,
+    )
+    plot_threshold_scan(
+        best_scan["threshold"].to_numpy(),
+        best_scan["action_accuracy_non_hold"].to_numpy(),
+        window=cfg.viz.moving_window,
+        title="Action Accuracy vs Threshold (best delta)",
+        out_base=rule_fig_dir / "accuracy_threshold",
+        formats=cfg.viz.save_formats,
+        ylabel="Accuracy (non-hold)",
+        label="accuracy_non_hold",
+    )
+    plot_threshold_scan(
+        best_scan["threshold"].to_numpy(),
+        best_scan["conflict_rate"].to_numpy(),
+        window=cfg.viz.moving_window,
+        title="Conflict Rate vs Threshold (best delta)",
+        out_base=rule_fig_dir / "conflict_rate_threshold",
+        formats=cfg.viz.save_formats,
+        ylabel="Conflict rate",
+        label="conflict_rate",
+    )
+
+    decisions = batch_decide(p_up, p_down, chosen_threshold, delta_min=chosen_delta)
     correct_dir = [int(d == t) if d != "HOLD" else 0 for d, t in zip(decisions, true_dir)]
     action_mask = np.array([d != "HOLD" for d in decisions])
     action_rate = float(np.mean(action_mask))
-    action_accuracy = float(np.mean([c for c, d in zip(correct_dir, decisions) if d != "HOLD"])) if action_mask.any() else 0.0
+    action_accuracy = (
+        float(np.mean([c for c, d in zip(correct_dir, decisions) if d != "HOLD"]))
+        if action_mask.any()
+        else 0.0
+    )
+    conflict_rate = float(np.mean((p_up >= chosen_threshold) & (p_down >= chosen_threshold)))
     precision_up = float(
         np.mean([t == "UP" for t, d in zip(true_dir, decisions) if d == "UP"])
     ) if any(d == "UP" for d in decisions) else 0.0
@@ -469,50 +607,25 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
         np.mean([t == "DOWN" for t, d in zip(true_dir, decisions) if d == "DOWN"])
     ) if any(d == "DOWN" for d in decisions) else 0.0
 
-    accuracy_by_threshold = []
-    conflict_rates = []
-    for t in thresholds:
-        d_list = batch_decide(p_up, p_down, float(t))
-        mask = np.array([d != "HOLD" for d in d_list])
-        conflict_rates.append(float(np.mean((p_up >= t) & (p_down >= t))))
-        if mask.any():
-            accuracy_by_threshold.append(
-                float(np.mean([d == tr for d, tr in zip(d_list, true_dir) if d != "HOLD"]))
-            )
-        else:
-            accuracy_by_threshold.append(0.0)
-
-    plot_threshold_scan(
-        thresholds,
-        accuracy_by_threshold,
-        window=cfg.viz.moving_window,
-        title="Action Accuracy vs Threshold",
-        out_base=rule_fig_dir / "accuracy_threshold",
-        formats=cfg.viz.save_formats,
-        ylabel="Accuracy (non-hold)",
-        label="accuracy_non_hold",
+    default_decisions = batch_decide(
+        p_up, p_down, cfg.decision_rule.T_min, delta_min=cfg.decision_rule.delta_min
     )
+    default_hold_rate = hold_rate(default_decisions)
 
-    plot_threshold_scan(
-        thresholds,
-        conflict_rates,
-        window=cfg.viz.moving_window,
-        title="Conflict Rate vs Threshold",
-        out_base=rule_fig_dir / "conflict_rate_threshold",
-        formats=cfg.viz.save_formats,
-        ylabel="Conflict rate",
-        label="conflict_rate",
-    )
-
-    threshold_scan_df = pd.DataFrame(
-        {
-            "threshold": thresholds,
-            "hold_rate": hold_rates,
-            "action_accuracy_non_hold": accuracy_by_threshold,
-            "conflict_rate": conflict_rates,
+    adaptation_status = "n/a"
+    adaptation_failures: list[str] = []
+    if cfg.adaptation is not None:
+        adapt_metrics = {
+            "action_accuracy_non_hold": action_accuracy,
+            "action_rate": action_rate,
+            "hold_rate": hold_rate(decisions),
+            "conflict_rate": conflict_rate,
+            "precision_up": precision_up,
+            "precision_down": precision_down,
         }
-    )
-    threshold_scan_df.to_csv(rule_dir / "threshold_scan.csv", index=False)
+        good, failures = assess_adaptation(adapt_metrics, cfg.adaptation)
+        adaptation_status = "GOOD_ENOUGH" if good else "NEEDS_ADAPTATION"
+        adaptation_failures = failures
 
     (rule_dir / "summary.md").write_text(
         "\n".join(
@@ -524,27 +637,43 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
                 f"Samples: {n_test}",
                 f"Class rates (UP/DOWN/FLAT): {up_rate:.4f}/{down_rate:.4f}/{flat_rate:.4f}",
                 f"Default T_min: {cfg.decision_rule.T_min}",
+                f"Default delta_min: {cfg.decision_rule.delta_min}",
                 f"Default hold_rate: {default_hold_rate:.4f}",
+                f"Best T_min: {best_threshold:.4f}",
+                f"Best delta_min: {best_delta:.4f}",
+                f"Use best from scan: {use_best}",
+                f"Chosen T_min: {chosen_threshold:.4f}",
+                f"Chosen delta_min: {chosen_delta:.4f}",
+                f"Best score: {best_score:.4f}",
                 f"Action rate: {action_rate:.4f}",
                 f"Action accuracy (non-hold): {action_accuracy:.4f}",
                 f"Conflict rate: {conflict_rate:.4f}",
                 f"Precision UP (system): {precision_up:.4f}",
                 f"Precision DOWN (system): {precision_down:.4f}",
-                f"Threshold scan rows: {len(thresholds)}",
+                f"Adaptation status: {adaptation_status}",
+                f"Adaptation failures: {', '.join(adaptation_failures) if adaptation_failures else 'none'}",
+                f"Grid rows: {len(grid_df)}",
             ]
         ),
         encoding="utf-8",
     )
+
     decision_log = pd.DataFrame(
         {
             "open_time_ms": times_te[:n_test],
             "p_up": p_up.astype(float),
             "p_down": p_down.astype(float),
             "p_max": np.maximum(p_up, p_down).astype(float),
+            "p_diff": np.abs(p_up - p_down).astype(float),
             "decision": decisions,
             "true_direction": true_dir,
             "correct_direction": correct_dir,
-            "conflict": ((p_up >= cfg.decision_rule.T_min) & (p_down >= cfg.decision_rule.T_min)).astype(int),
+            "conflict": ((p_up >= chosen_threshold) & (p_down >= chosen_threshold)).astype(int),
+            "threshold": float(chosen_threshold),
+            "delta_min": float(chosen_delta),
+            "best_threshold": float(best_threshold),
+            "best_delta_min": float(best_delta),
+            "use_best_from_scan": int(use_best),
         }
     )
     for idx, feature in enumerate(feature_cols):

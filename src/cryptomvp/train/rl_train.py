@@ -45,6 +45,7 @@ def train_reinforce(
     lr: float,
     gamma: float,
     reward_cfg: RewardConfig,
+    policy_hidden_dim: int = 64,
     entropy_bonus: float = 0.0,
     seed: int = 7,
     track_diagnostics: bool = False,
@@ -57,7 +58,7 @@ def train_reinforce(
     logger = get_logger(f"rl.{model_name}")
 
     X = X.astype(np.float32)
-    policy = PolicyNet(input_dim=X.shape[1]).to(device)
+    policy = PolicyNet(input_dim=X.shape[1], hidden_dim=policy_hidden_dim).to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
 
     env = DirectionEnv(
@@ -108,6 +109,7 @@ def train_reinforce(
                         "reward": float(reward),
                         "is_hold": float(info["is_hold"]),
                         "correct": float(info["correct"]),
+                        "label": float(info.get("label", 0.0)),
                         "state": state.astype(np.float32).tolist(),
                     }
                 )

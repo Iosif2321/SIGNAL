@@ -39,13 +39,22 @@ python scripts/test_train_baseline.py --config configs/mvp.yaml
 python scripts/test_train_rl.py --config configs/mvp.yaml
 ```
 
-### Test 5: Reward/penalty diagnostics
+### Test 5: RL tuner (full pipeline)
+```bash
+python scripts/test_rl_tuner.py --config configs/mvp.yaml
+```
+
+### Test 6: Reward/penalty diagnostics
 ```bash
 python scripts/test_reward_weights.py --config configs/mvp.yaml
 ```
 
-### Run all
+### Run all (real data, month window)
 ```bash
+# Full training on the fixed month window:
+python scripts/mvp_run_all.py
+
+# Faster run (same real dataset, fewer epochs/episodes):
 python scripts/mvp_run_all.py --fast
 ```
 
@@ -56,10 +65,30 @@ Artifacts are stored under `runs/<run_id>/reports/`:
 - `runs/<run_id>/reports/dataset/`
 - `runs/<run_id>/reports/supervised_up/`, `runs/<run_id>/reports/supervised_down/`
 - `runs/<run_id>/reports/rl_up/`, `runs/<run_id>/reports/rl_down/`
+- `runs/<run_id>/reports/rl_tuner/`
 - `runs/<run_id>/reports/reward_weights/`
 - `runs/<run_id>/reports/decision_rule/`
 
 Run metadata and copied config live in `runs/<run_id>/metadata.json` and `runs/<run_id>/config.yaml`.
+
+## Real Data Requirement
+
+All pipeline scripts expect the fixed month dataset defined in `configs/mvp.yaml`.
+Run `scripts/test_build_dataset.py` first to download and cache the dataset under the run folder.
+
+## Decision Rule Notes
+
+- `decision_rule.T_min` is the minimum confidence threshold.
+- `decision_rule.delta_min` enforces a minimum separation between `p_up` and `p_down` to avoid conflicts.
+- `decision_rule.delta_grid` is used to scan thresholds and pick the best (saved under `reports/decision_rule/`).
+- `decision_rule.use_best_from_scan` controls whether decision logs use the best scan result or the fixed config value.
+
+## RL Tuner Notes
+
+- The tuner runs a **full pipeline** per episode (supervised + RL + decision_rule).
+- Parameter search space is defined under `tuner.param_space` in `configs/mvp.yaml`.
+- `tuner.param_space` uses dotted keys (e.g. `supervised.lr`, `rl.reward.R_hold`, `features.list_of_features`).
+- Each episode starts from scratch (new UP/DOWN models and new RL policies).
 
 ## Pytest
 

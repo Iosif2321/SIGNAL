@@ -92,6 +92,7 @@ def test_direction_effectiveness_fast(tmp_path: Path) -> None:
         run_dir=run_dir,
         out_dir=out_dir,
         threshold=0.55,
+        delta_min=0.0,
         rolling_window=3,
         formats=["png"],
         scan_thresholds=True,

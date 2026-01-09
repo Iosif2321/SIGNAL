@@ -42,6 +42,7 @@ def train_supervised(
     batch_size: int,
     lr: float,
     patience: int,
+    weight_decay: float,
     model_name: str,
     track_weights: bool = False,
 ) -> TrainHistory:
@@ -60,11 +61,12 @@ def train_supervised(
     val_loader = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size)
 
     model = model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     criterion = nn.CrossEntropyLoss()
 
     history = TrainHistory([], [], [], [], [], [], [])
     best_val = float("inf")
+    best_state = None
     bad_epochs = 0
     prev_params = params_vector(model).detach().clone() if track_weights else None
 
@@ -128,10 +130,14 @@ def train_supervised(
             bad_epochs = 0
             ckpt_path = checkpoints_dir() / f"{model_name}.pt"
             torch.save(model.state_dict(), ckpt_path)
+            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             bad_epochs += 1
             if bad_epochs >= patience:
                 logger.info("Early stopping at epoch %s", epoch + 1)
                 break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
 
     return history
