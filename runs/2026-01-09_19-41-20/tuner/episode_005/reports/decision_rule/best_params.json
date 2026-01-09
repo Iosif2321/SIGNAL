@@ -1,0 +1,7 @@
+{
+  "best_threshold": 0.5,
+  "best_delta_min": 0.02,
+  "best_score": 0.3053385416666667,
+  "default_threshold": 0.45,
+  "default_delta_min": 0.02
+}

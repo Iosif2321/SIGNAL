@@ -1,0 +1,4 @@
+{
+  "method": "best_anchor",
+  "note": "no logits in progressive tuner"
+}
