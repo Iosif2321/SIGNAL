@@ -26,6 +26,7 @@ from cryptomvp.utils.logging import get_logger
 from cryptomvp.viz.plotting import (
     plot_confusion_matrix,
     plot_histogram,
+    plot_runs_with_band,
     plot_series_with_band,
     save_figure,
 )
@@ -727,6 +728,7 @@ def analyze_run(inputs: AnalysisInputs) -> Path:
         ("rl_up", "rl_up_step", "rl_up_episode", y_up),
         ("rl_down", "rl_down_step", "rl_down_episode", y_down),
     ]
+    episode_frames: Dict[str, pd.DataFrame] = {}
     for name, step_key, ep_key, labels in rl_pairs:
         step_path = artifacts.get(step_key)
         if not step_path or not step_path.exists():
@@ -737,6 +739,7 @@ def analyze_run(inputs: AnalysisInputs) -> Path:
         ep_path = artifacts.get(ep_key)
         if ep_path and ep_path.exists():
             episode_df = load_dataframe(ep_path)
+            episode_frames[name] = episode_df
         metrics = analyze_rl(
             name=name,
             step_df=step_df,
@@ -750,6 +753,30 @@ def analyze_run(inputs: AnalysisInputs) -> Path:
         notes.append(
             f"{name}: action_precision={metrics['action_precision']:.3f}, hold_rate={metrics['hold_rate']:.3f}"
         )
+
+    if {"rl_up", "rl_down"}.issubset(episode_frames):
+        reward_up = episode_frames["rl_up"].get("reward")
+        reward_down = episode_frames["rl_down"].get("reward")
+        if reward_up is not None and reward_down is not None:
+            min_len = min(len(reward_up), len(reward_down))
+            rewards = np.vstack(
+                [
+                    reward_up.astype(float).to_numpy()[:min_len],
+                    reward_down.astype(float).to_numpy()[:min_len],
+                ]
+            )
+            fig_dir = inputs.out_dir / "figures"
+            fig_dir.mkdir(parents=True, exist_ok=True)
+            plot_runs_with_band(
+                np.arange(1, min_len + 1),
+                rewards,
+                title="RL Reward Comparison per Episode",
+                xlabel="Episode",
+                ylabel="Reward",
+                out_base=fig_dir / "rl_reward_comparison_episode",
+                formats=inputs.formats,
+                labels=["rl_up", "rl_down"],
+            )
 
     summary_df = summarize_metrics(metrics_rows, inputs.out_dir)
     write_summary_md(
