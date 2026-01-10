@@ -110,7 +110,7 @@ tuner:
     rl_down_hold_penalty: 0.4
     improve_up_accuracy_weight: 0.4
     improve_down_accuracy_weight: 0.4
-    anchor_penalty: 0.05
+    anchor_penalty: 0.02
     stability_penalty: 0.0
   feature_selection:
     enabled: true
@@ -118,8 +118,8 @@ tuner:
     corr_threshold: 0.98
     var_threshold: 1e-12
   search:
-    explore_prob: 0.25
-    mutate_prob: 0.7
+    explore_prob: 0.35
+    mutate_prob: 0.8
     max_mutations: 2
     neighbor_only: false
     always_mutate: true
