@@ -653,6 +653,7 @@ def run_rl_tuner_agent(
             adaptation_good = None
             adaptation_failures: list[str] = []
             if cfg.adaptation is not None:
+                metrics.setdefault("drift_score", 0.0)
                 good, failures = assess_adaptation(metrics, cfg.adaptation)
                 adaptation_good = int(good)
                 adaptation_failures = failures

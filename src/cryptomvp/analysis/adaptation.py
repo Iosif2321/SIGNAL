@@ -39,5 +39,6 @@ def assess_adaptation(metrics: Dict[str, float], cfg: AdaptationConfig) -> Tuple
     _check_min("rl_down_accuracy", cfg.min_rl_down_accuracy, "rl_down_accuracy")
     _check_max("rl_up_hold_rate", cfg.max_rl_up_hold_rate, "rl_up_hold_rate")
     _check_max("rl_down_hold_rate", cfg.max_rl_down_hold_rate, "rl_down_hold_rate")
+    _check_max("drift_score", cfg.max_drift_score, "drift_score")
 
     return (len(failures) == 0), failures

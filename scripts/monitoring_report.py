@@ -16,7 +16,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from cryptomvp.analysis.adaptation import assess_adaptation  # noqa: E402
-from cryptomvp.analysis.monitoring import drift_report, rolling_metrics, rolling_metrics_by_session  # noqa: E402
+from cryptomvp.analysis.monitoring import (  # noqa: E402
+    rolling_drift_report,
+    rolling_metrics,
+    rolling_metrics_by_session,
+)
 from cryptomvp.config import load_config  # noqa: E402
 from cryptomvp.evaluate.metrics import compute_metrics, compute_metrics_by_session  # noqa: E402
 from cryptomvp.utils.io import reports_dir  # noqa: E402
@@ -92,46 +96,94 @@ def run_monitoring(
     metrics_by_session = compute_metrics_by_session(decision_log)
 
     drift_scores = []
-    drift_mean = None
+    drift_score = None
+    drift_score_max = None
+    drift_ks_score = None
+    drift_ks_score_max = None
     dataset_path = Path(cfg.dataset.output_path)
     if dataset_path.exists():
         df = pd.read_parquet(dataset_path) if dataset_path.suffix == ".parquet" else pd.read_csv(dataset_path)
-        split_idx = int(len(df) * 0.7)
-        df_ref = df.iloc[:split_idx].reset_index(drop=True)
-        df_cur = df.iloc[split_idx:].reset_index(drop=True)
-        drift_scores = drift_report(
-            df_ref,
-            df_cur,
+        drift_scores = rolling_drift_report(
+            df,
             feature_list=["returns", "volatility_20", "volume_change"],
+            window=window,
             bins=10,
         )
         if drift_scores:
-            drift_mean = float(np.mean([d.psi for d in drift_scores]))
-            pd.DataFrame([d.__dict__ for d in drift_scores]).to_csv(
-                report_dir / "drift_scores.csv", index=False
+            drift_df = pd.DataFrame([d.__dict__ for d in drift_scores])
+            drift_df.to_csv(report_dir / "drift_scores.csv", index=False)
+            drift_summary = (
+                drift_df.groupby("open_time_ms")[["psi", "ks"]].mean().reset_index()
             )
-            plot_bar(
-                [d.feature for d in drift_scores],
-                [d.psi for d in drift_scores],
-                title="PSI Drift Scores",
-                xlabel="Feature",
+            drift_summary.to_csv(report_dir / "drift_over_time.csv", index=False)
+            drift_score = float(drift_summary["psi"].iloc[-1])
+            drift_score_max = float(drift_summary["psi"].max())
+            drift_ks_score = float(drift_summary["ks"].iloc[-1])
+            drift_ks_score_max = float(drift_summary["ks"].max())
+            plot_series_with_band(
+                drift_summary["open_time_ms"].to_numpy(),
+                drift_summary["psi"].to_numpy(),
+                window=cfg.viz.moving_window,
+                title="Rolling Drift PSI (mean)",
+                xlabel="open_time_ms",
                 ylabel="PSI",
-                out_base=figures_dir / "drift_psi",
+                label="psi_mean",
+                out_base=figures_dir / "rolling_drift_psi",
                 formats=cfg.viz.save_formats,
             )
+            plot_series_with_band(
+                drift_summary["open_time_ms"].to_numpy(),
+                drift_summary["ks"].to_numpy(),
+                window=cfg.viz.moving_window,
+                title="Rolling Drift KS (mean)",
+                xlabel="open_time_ms",
+                ylabel="KS",
+                label="ks_mean",
+                out_base=figures_dir / "rolling_drift_ks",
+                formats=cfg.viz.save_formats,
+            )
+            latest = drift_df[drift_df["open_time_ms"] == drift_summary["open_time_ms"].iloc[-1]]
+            if not latest.empty:
+                plot_bar(
+                    latest["feature"].tolist(),
+                    latest["psi"].tolist(),
+                    title="Latest Window PSI Drift",
+                    xlabel="Feature",
+                    ylabel="PSI",
+                    out_base=figures_dir / "drift_psi_latest",
+                    formats=cfg.viz.save_formats,
+                )
+                plot_bar(
+                    latest["feature"].tolist(),
+                    latest["ks"].tolist(),
+                    title="Latest Window KS Drift",
+                    xlabel="Feature",
+                    ylabel="KS",
+                    out_base=figures_dir / "drift_ks_latest",
+                    formats=cfg.viz.save_formats,
+                )
 
-    alert = {"triggered": False, "actions": [], "drift_score": drift_mean}
+    alert = {
+        "triggered": False,
+        "actions": [],
+        "drift_score": drift_score,
+        "drift_score_max": drift_score_max,
+        "drift_ks_score": drift_ks_score,
+        "drift_ks_score_max": drift_ks_score_max,
+    }
     if cfg.adaptation is not None:
+        if drift_score is not None:
+            metrics["drift_score"] = drift_score
         good, failures = assess_adaptation(metrics, cfg.adaptation)
         alert["adaptation_good"] = good
         alert["failures"] = failures
         if not good:
             alert["triggered"] = True
             alert["actions"].append("rescan_thresholds")
-        if cfg.adaptation.max_drift_score is not None and drift_mean is not None:
-            if drift_mean > cfg.adaptation.max_drift_score:
+        if cfg.adaptation.max_drift_score is not None and drift_score is not None:
+            if drift_score > cfg.adaptation.max_drift_score:
                 alert["triggered"] = True
-                alert["actions"].append("retune_or_retrain")
+                alert["actions"].extend(["switch_strategy", "retune_params"])
 
     (report_dir / "alert.json").write_text(json.dumps(alert, indent=2), encoding="utf-8")
     (report_dir / "summary.md").write_text(
@@ -143,7 +195,10 @@ def run_monitoring(
                 f"Accuracy (non-hold): {metrics['accuracy_non_hold']:.4f}",
                 f"Hold rate: {metrics['hold_rate']:.4f}",
                 f"Conflict rate: {metrics['conflict_rate']:.4f}",
-                f"Drift mean PSI: {drift_mean if drift_mean is not None else 'n/a'}",
+                f"Drift PSI (latest mean): {drift_score if drift_score is not None else 'n/a'}",
+                f"Drift KS (latest mean): {drift_ks_score if drift_ks_score is not None else 'n/a'}",
+                f"Drift KS (max mean): {drift_ks_score_max if drift_ks_score_max is not None else 'n/a'}",
+                f"Drift PSI (max mean): {drift_score_max if drift_score_max is not None else 'n/a'}",
                 f"Alert triggered: {alert['triggered']}",
                 f"Actions: {', '.join(alert['actions']) if alert['actions'] else 'none'}",
             ]
