@@ -504,6 +504,22 @@ def run_rl_tuner_agent(
     reward_history: List[float] = []
     accuracy_history: List[float] = []
 
+    thresholds = np.array(
+        sorted(
+            {
+                float(
+                    np.clip(
+                        cfg.decision_rule.T_min + offset * cfg.decision_rule.scan_step,
+                        cfg.decision_rule.scan_min,
+                        cfg.decision_rule.scan_max,
+                    )
+                )
+                for offset in (-1, 0, 1)
+            }
+        )
+    )
+    delta_values = cfg.decision_rule.delta_grid or [cfg.decision_rule.delta_min]
+
     def rolling_variance(history: List[float], current: float, window: int) -> float:
         values = (history + [current])[-window:]
         if len(values) < 2:
@@ -589,18 +605,46 @@ def run_rl_tuner_agent(
 
         p_up = up_probs[:, 0] if len(up_probs) else np.array([])
         p_down = down_probs[:, 1] if len(down_probs) else np.array([])
+        best_scan_score = -float("inf")
+        best_threshold = cfg.decision_rule.T_min
+        best_delta = cfg.decision_rule.delta_min
+        for delta in delta_values:
+            for threshold in thresholds:
+                scan_metrics = _decision_metrics_from_probs(
+                    p_up,
+                    p_down,
+                    y_up_val,
+                    threshold=float(threshold),
+                    delta_min=float(delta),
+                )
+                score = (
+                    scan_metrics["decision_action_accuracy_non_hold"]
+                    * scan_metrics["decision_action_rate"]
+                    * (1.0 - scan_metrics["decision_conflict_rate"])
+                )
+                if score > best_scan_score:
+                    best_scan_score = float(score)
+                    best_threshold = float(threshold)
+                    best_delta = float(delta)
+
+        use_best = cfg.decision_rule.use_best_from_scan
+        chosen_threshold = best_threshold if use_best else cfg.decision_rule.T_min
+        chosen_delta = best_delta if use_best else cfg.decision_rule.delta_min
         decision_metrics = _decision_metrics_from_probs(
             p_up,
             p_down,
             y_up_val,
-            threshold=cfg.decision_rule.T_min,
-            delta_min=cfg.decision_rule.delta_min,
+            threshold=chosen_threshold,
+            delta_min=chosen_delta,
         )
 
         metrics: Dict[str, float] = {}
         metrics.update(decision_metrics)
         metrics.update(
             {
+                "decision_threshold": float(chosen_threshold),
+                "decision_delta_min": float(chosen_delta),
+                "decision_scan_score": float(best_scan_score),
                 "rl_up_accuracy": rl_up_acc,
                 "rl_down_accuracy": rl_down_acc,
                 "rl_up_error_balance": rl_up_balance,
@@ -764,6 +808,22 @@ def run_rl_tuner_agent(
         adaptation_line = f"Adaptation good rate: {good_rate:.4f}"
 
     best_state = best_state or {"episode": 0, "reward": best_reward, "metrics": {}}
+    best_threshold = float(best_state["metrics"].get("decision_threshold", cfg.decision_rule.T_min))
+    best_delta = float(best_state["metrics"].get("decision_delta_min", cfg.decision_rule.delta_min))
+    best_scan_score = float(best_state["metrics"].get("decision_scan_score", 0.0))
+    (report_dir / "best_decision_threshold.json").write_text(
+        json.dumps(
+            {
+                "best_threshold": best_threshold,
+                "best_delta_min": best_delta,
+                "best_score": best_scan_score,
+                "default_threshold": cfg.decision_rule.T_min,
+                "default_delta_min": cfg.decision_rule.delta_min,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     summary_lines = [
         "# RL Tuner Summary (Agent Mode)",
         f"Symbol: {cfg.symbol}",
