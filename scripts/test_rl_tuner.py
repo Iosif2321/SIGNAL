@@ -66,12 +66,19 @@ def _load_decision_metrics(decision_log_path: Path) -> Dict[str, float]:
     conflict_rate = float(df["conflict"].mean()) if "conflict" in df.columns else 0.0
     precision_up = 0.0
     precision_down = 0.0
+    up_rate = 0.0
+    down_rate = 0.0
+    down_share = 0.0
     if "true_direction" in df.columns:
         true_dir = df["true_direction"].astype(str)
         if (decisions == "UP").any():
             precision_up = float((true_dir[decisions == "UP"] == "UP").mean())
         if (decisions == "DOWN").any():
             precision_down = float((true_dir[decisions == "DOWN"] == "DOWN").mean())
+    if action_mask.any():
+        up_rate = float((decisions[action_mask] == "UP").mean())
+        down_rate = float((decisions[action_mask] == "DOWN").mean())
+        down_share = down_rate / max(1e-9, (up_rate + down_rate))
     metrics = {
         "decision_hold_rate": hold_rate,
         "decision_action_rate": action_rate,
@@ -79,6 +86,9 @@ def _load_decision_metrics(decision_log_path: Path) -> Dict[str, float]:
         "decision_conflict_rate": conflict_rate,
         "decision_precision_up": precision_up,
         "decision_precision_down": precision_down,
+        "decision_up_rate": up_rate,
+        "decision_down_rate": down_rate,
+        "decision_down_share": down_share,
     }
     if "session_id" in df.columns:
         session_metrics = []
@@ -158,6 +168,9 @@ def _decision_metrics_from_probs(
     action_accuracy = 0.0
     precision_up = 0.0
     precision_down = 0.0
+    up_rate = 0.0
+    down_rate = 0.0
+    down_share = 0.0
     if len(decisions_arr):
         true_str = np.where(true_dir > 0, "UP", np.where(true_dir < 0, "DOWN", "HOLD"))
         if action_mask.any():
@@ -166,6 +179,10 @@ def _decision_metrics_from_probs(
             precision_up = float(np.mean(true_str[decisions_arr == "UP"] == "UP"))
         if (decisions_arr == "DOWN").any():
             precision_down = float(np.mean(true_str[decisions_arr == "DOWN"] == "DOWN"))
+        if action_mask.any():
+            up_rate = float(np.mean(decisions_arr[action_mask] == "UP"))
+            down_rate = float(np.mean(decisions_arr[action_mask] == "DOWN"))
+            down_share = down_rate / max(1e-9, (up_rate + down_rate))
     return {
         "decision_hold_rate": hold_rate,
         "decision_action_rate": action_rate,
@@ -173,12 +190,18 @@ def _decision_metrics_from_probs(
         "decision_conflict_rate": conflict_rate,
         "decision_precision_up": precision_up,
         "decision_precision_down": precision_down,
+        "decision_up_rate": up_rate,
+        "decision_down_rate": down_rate,
+        "decision_down_share": down_share,
         "hold_rate": hold_rate,
         "action_rate": action_rate,
         "action_accuracy_non_hold": action_accuracy,
         "conflict_rate": conflict_rate,
         "precision_up": precision_up,
         "precision_down": precision_down,
+        "up_rate": up_rate,
+        "down_rate": down_rate,
+        "down_share": down_share,
     }
 
 
@@ -598,6 +621,8 @@ def run_rl_tuner_agent(
                 + cfg.tuner.reward.decision_action_rate_weight * metrics["decision_action_rate"]
                 - cfg.tuner.reward.decision_conflict_penalty * metrics["decision_conflict_rate"]
                 - cfg.tuner.reward.decision_hold_penalty * metrics["decision_hold_rate"]
+                - cfg.tuner.reward.decision_balance_penalty
+                * abs(metrics["decision_down_share"] - cfg.tuner.reward.decision_down_target)
                 + cfg.tuner.reward.rl_up_accuracy_weight * metrics["rl_up_accuracy"]
                 + cfg.tuner.reward.rl_down_accuracy_weight * metrics["rl_down_accuracy"]
                 - cfg.tuner.reward.rl_up_error_balance_penalty * metrics["rl_up_error_balance"]
@@ -743,6 +768,30 @@ def run_rl_tuner_agent(
             out_base=fig_dir / "decision_hold_rate_per_episode",
             formats=cfg.viz.save_formats,
         )
+        if "decision_precision_down" in history_df.columns:
+            plot_series_with_band(
+                episodes_idx,
+                history_df["decision_precision_down"].to_numpy(),
+                window=cfg.viz.moving_window,
+                title="Decision Precision DOWN",
+                xlabel="Episode",
+                ylabel="Precision",
+                label="decision_precision_down",
+                out_base=fig_dir / "decision_precision_down_per_episode",
+                formats=cfg.viz.save_formats,
+            )
+        if "decision_down_share" in history_df.columns:
+            plot_series_with_band(
+                episodes_idx,
+                history_df["decision_down_share"].to_numpy(),
+                window=cfg.viz.moving_window,
+                title="Decision DOWN Share (non-hold)",
+                xlabel="Episode",
+                ylabel="Share",
+                label="decision_down_share",
+                out_base=fig_dir / "decision_down_share_per_episode",
+                formats=cfg.viz.save_formats,
+            )
 
     adaptation_line = "Adaptation good rate: n/a"
     if cfg.adaptation is not None and "adaptation_good" in history_df.columns and not history_df.empty:
@@ -763,7 +812,9 @@ def run_rl_tuner_agent(
         f"Decision weights: acc={cfg.tuner.reward.decision_accuracy_weight}, "
         f"action={cfg.tuner.reward.decision_action_rate_weight}, "
         f"conflict_penalty={cfg.tuner.reward.decision_conflict_penalty}, "
-        f"hold_penalty={cfg.tuner.reward.decision_hold_penalty}",
+        f"hold_penalty={cfg.tuner.reward.decision_hold_penalty}, "
+        f"balance_penalty={cfg.tuner.reward.decision_balance_penalty}, "
+        f"down_target={cfg.tuner.reward.decision_down_target}",
         f"RL weights: up_acc={cfg.tuner.reward.rl_up_accuracy_weight}, "
         f"down_acc={cfg.tuner.reward.rl_down_accuracy_weight}, "
         f"up_error_balance_penalty={cfg.tuner.reward.rl_up_error_balance_penalty}, "
@@ -993,6 +1044,8 @@ def run_rl_tuner(
             + cfg.tuner.reward.decision_action_rate_weight * metrics["decision_action_rate"]
             - cfg.tuner.reward.decision_conflict_penalty * metrics["decision_conflict_rate"]
             - cfg.tuner.reward.decision_hold_penalty * metrics["decision_hold_rate"]
+            - cfg.tuner.reward.decision_balance_penalty
+            * abs(metrics["decision_down_share"] - cfg.tuner.reward.decision_down_target)
             + cfg.tuner.reward.decision_min_session_accuracy_weight
             * metrics.get("decision_min_session_accuracy", 0.0)
             + cfg.tuner.reward.decision_min_session_precision_up_weight
