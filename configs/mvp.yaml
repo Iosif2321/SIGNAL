@@ -67,9 +67,9 @@ rl:
   policy_hidden_dim: 64
 
 decision_rule:
-  T_min: 0.50
-  delta_min: 0.04
-  delta_grid: [0.02, 0.04, 0.06, 0.08]
+  T_min: 0.60
+  delta_min: 0.06
+  delta_grid: [0.04, 0.06, 0.08, 0.10]
   use_best_from_scan: true
   scan_min: 0.45
   scan_max: 0.75
@@ -92,7 +92,7 @@ tuner:
     decision_accuracy_weight: 0.4
     decision_action_rate_weight: 0.3
     decision_conflict_penalty: 0.3
-    decision_hold_penalty: 0.3
+    decision_hold_penalty: 0.6
     decision_min_session_accuracy_weight: 0.0
     decision_min_session_precision_up_weight: 0.0
     decision_min_session_precision_down_weight: 0.0
@@ -104,8 +104,8 @@ tuner:
     online_rl_down_accuracy_weight: 0.5
     rl_up_error_balance_penalty: 0.2
     rl_down_error_balance_penalty: 0.2
-    rl_up_hold_penalty: 0.1
-    rl_down_hold_penalty: 0.2
+    rl_up_hold_penalty: 0.3
+    rl_down_hold_penalty: 0.4
     improve_up_accuracy_weight: 0.4
     improve_down_accuracy_weight: 0.4
     anchor_penalty: 0.05
