@@ -145,6 +145,9 @@ class TunerConfig:
     candidates: Optional[List[TunerCandidateConfig]]
     search: TunerSearchConfig
     feature_selection: Optional[TunerFeatureSelectionConfig] = None
+    mode: str = "search"
+    agent_train_episodes: int = 5
+    agent_steps_per_episode: int = 200
 
 
 @dataclass(frozen=True)
@@ -414,6 +417,9 @@ def load_config(path: str | Path) -> Config:
             candidates=candidates,
             search=search_cfg,
             feature_selection=feature_selection_cfg,
+            mode=str(tuner.get("mode", "search")),
+            agent_train_episodes=int(tuner.get("agent_train_episodes", 5)),
+            agent_steps_per_episode=int(tuner.get("agent_steps_per_episode", data["rl"]["steps_per_episode"])),
         )
 
     adaptation_cfg = None

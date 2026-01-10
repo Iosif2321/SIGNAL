@@ -54,6 +54,7 @@ def train_reinforce(
     model_name: str = "policy",
     device: torch.device | None = None,
     label_action_map: Dict[int, int] | None = None,
+    init_state: Dict[str, torch.Tensor] | None = None,
 ) -> Tuple[PolicyNet, RLHistory]:
     """Train a policy network with REINFORCE on GPU-only."""
     device = device or require_cuda()
@@ -61,6 +62,8 @@ def train_reinforce(
 
     X = X.astype(np.float32)
     policy = PolicyNet(input_dim=X.shape[1], hidden_dim=policy_hidden_dim).to(device)
+    if init_state is not None:
+        policy.load_state_dict(init_state)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
 
     env = DirectionEnv(
