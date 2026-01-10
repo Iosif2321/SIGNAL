@@ -12,12 +12,16 @@ import pandas as pd
 import yaml
 
 from cryptomvp.config import load_config
-from cryptomvp.data.features import compute_features
+from cryptomvp.data.features import compute_features, compute_regime_labels
 from cryptomvp.data.labels import make_up_down_labels
 from cryptomvp.data.scaling import apply_standard_scaler, fit_standard_scaler
 from cryptomvp.data.windowing import make_windows
 from cryptomvp.decision.rule import batch_decide
-from cryptomvp.evaluate.metrics import compute_metrics, compute_metrics_by_session
+from cryptomvp.evaluate.metrics import (
+    compute_metrics,
+    compute_metrics_by_regime,
+    compute_metrics_by_session,
+)
 from cryptomvp.models.down_model import DownModel
 from cryptomvp.models.up_model import UpModel
 from cryptomvp.features.registry import resolve_feature_list
@@ -116,11 +120,12 @@ def _build_decision_log(
     t_min: float,
     delta_min: float,
     session_id: np.ndarray,
+    regime: np.ndarray | None = None,
 ) -> pd.DataFrame:
     true_dir = np.where(y_up == 1, "UP", np.where(y_down == 1, "DOWN", "FLAT"))
     decisions = np.array(batch_decide(p_up, p_down, t_min, delta_min=delta_min))
     conflict = (p_up >= t_min) & (p_down >= t_min)
-    return pd.DataFrame(
+    df = pd.DataFrame(
         {
             "open_time_ms": times,
             "p_up": p_up.astype(float),
@@ -131,6 +136,9 @@ def _build_decision_log(
             "session_id": session_id,
         }
     )
+    if regime is not None:
+        df["regime"] = regime
+    return df
 
 
 def _build_folds(
@@ -205,6 +213,7 @@ def run_walk_forward(
                 features_sess, int(sess_cfg["features"]["window_size_K"])
             )
             y_up_sess, y_down_sess = make_up_down_labels(df_sess, window_times_sess)
+            regime_sess = compute_regime_labels(df_sess, window_times_sess)
             n = min(len(X_sess), len(y_up_sess))
             if n == 0:
                 continue
@@ -212,6 +221,7 @@ def run_walk_forward(
             y_up_sess = y_up_sess[:n]
             y_down_sess = y_down_sess[:n]
             window_times_sess = window_times_sess[:n]
+            regime_sess = regime_sess[:n]
             times_sess = pd.to_datetime(window_times_sess, unit="ms", utc=True)
             session_payload[session_id] = {
                 "X": X_sess,
@@ -219,6 +229,7 @@ def run_walk_forward(
                 "y_down": y_down_sess,
                 "times": times_sess,
                 "window_times": window_times_sess,
+                "regime": regime_sess,
                 "cfg": sess_cfg,
             }
     else:
@@ -231,11 +242,13 @@ def run_walk_forward(
         features = compute_features(df, feature_list)
         X, window_times, _ = make_windows(features, int(base_cfg["features"]["window_size_K"]))
         y_up, y_down = make_up_down_labels(df, window_times)
+        regime_labels = compute_regime_labels(df, window_times)
         n = min(len(X), len(y_up))
         X = X[:n]
         y_up = y_up[:n]
         y_down = y_down[:n]
         window_times = window_times[:n]
+        regime_labels = regime_labels[:n]
         session_ids = df.set_index("open_time_ms").loc[window_times, "session_id"].to_numpy()
         times = pd.to_datetime(window_times, unit="ms", utc=True)
         global_payload = {
@@ -245,6 +258,7 @@ def run_walk_forward(
             "window_times": window_times,
             "session_ids": session_ids,
             "times": times,
+            "regime": regime_labels,
         }
 
     fold_metrics = []
@@ -292,6 +306,7 @@ def run_walk_forward(
                 p_down = _predict_probs(down_model, X_scaled[test_mask], device=device)
                 t_min, delta_min = _resolve_thresholds(sess_cfg)
                 window_times_sess = payload["window_times"]
+                regime_sess = payload["regime"]
                 log = _build_decision_log(
                     window_times_sess[test_mask],
                     p_up,
@@ -301,6 +316,7 @@ def run_walk_forward(
                     t_min,
                     delta_min,
                     np.array([session_id] * len(p_up)),
+                    regime_sess[test_mask],
                 )
                 decision_logs.append(log)
         else:
@@ -314,6 +330,7 @@ def run_walk_forward(
             y_down = global_payload["y_down"]
             window_times = global_payload["window_times"]
             session_ids = global_payload["session_ids"]
+            regime_labels = global_payload["regime"]
             scaler_mean, scaler_std = fit_standard_scaler(
                 X[train_mask].reshape(np.sum(train_mask), -1)
             )
@@ -351,6 +368,7 @@ def run_walk_forward(
                     t_min,
                     delta_min,
                     np.array([session_id] * int(np.sum(sess_mask))),
+                    regime_labels[test_mask][sess_mask],
                 )
                 decision_logs.append(log)
 
@@ -359,6 +377,7 @@ def run_walk_forward(
         fold_log = pd.concat(decision_logs, ignore_index=True)
         fold_metrics_out = compute_metrics(fold_log)
         fold_metrics_sessions = compute_metrics_by_session(fold_log)
+        fold_metrics_regime = compute_metrics_by_regime(fold_log)
         fold_metrics.append(fold_metrics_out)
         fold_session_metrics.append(fold_metrics_sessions)
         fold_log.to_parquet(fold_root / "decisions.parquet", index=False)
@@ -367,6 +386,9 @@ def run_walk_forward(
         )
         (fold_root / "metrics_by_session.json").write_text(
             json.dumps(fold_metrics_sessions, indent=2), encoding="utf-8"
+        )
+        (fold_root / "metrics_by_regime.json").write_text(
+            json.dumps(fold_metrics_regime, indent=2), encoding="utf-8"
         )
 
     if not fold_metrics:

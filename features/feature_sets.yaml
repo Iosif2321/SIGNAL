@@ -24,6 +24,7 @@ feature_sets:
       - macd
       - macd_signal
       - macd_hist
+      - regime_trend_20
       - rsi_14
       - roc_10
       - momentum_10
@@ -70,6 +71,7 @@ feature_sets:
       - ema_12
       - ema_26
       - ema_diff
+      - regime_trend_20
       - rsi_14
       - roc_10
       - momentum_10

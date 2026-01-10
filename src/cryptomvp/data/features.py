@@ -642,6 +642,14 @@ def compute_features(df: pd.DataFrame, feature_list: List[str], allow_mtf: bool 
         if feature == "trend_strength_20":
             out[feature] = _rolling_slope(close, window=20).abs()
             continue
+        window = _parse_int_suffix(feature, "regime_trend_")
+        if window is not None:
+            sma = _sma(close, window)
+            slope = _rolling_slope(sma, window)
+            vol = returns.rolling(window=window, min_periods=1).std()
+            strength = slope.abs() / (vol + EPS)
+            out[feature] = (strength > 1.0).astype(float)
+            continue
         if feature == "mean_reversion_score":
             mean = close.rolling(window=20, min_periods=1).mean()
             std = close.rolling(window=20, min_periods=1).std()
@@ -665,3 +673,16 @@ def compute_features(df: pd.DataFrame, feature_list: List[str], allow_mtf: bool 
     out["open_time_ms"] = df["open_time_ms"].values
     out = out.dropna().reset_index(drop=True)
     return out
+
+
+def compute_regime_labels(
+    df: pd.DataFrame,
+    window_times: np.ndarray,
+    window: int = 20,
+) -> np.ndarray:
+    """Compute trend/flat regime labels aligned to window timestamps."""
+    feature_name = f"regime_trend_{window}"
+    regime_df = compute_features(df, [feature_name])
+    series = regime_df.set_index("open_time_ms")[feature_name]
+    aligned = series.reindex(window_times, method="ffill").fillna(0.0)
+    return np.where(aligned.to_numpy(dtype=float) >= 0.5, "trend", "flat")
