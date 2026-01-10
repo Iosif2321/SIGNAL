@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
+import torch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,8 +22,16 @@ if str(SRC) not in sys.path:
 
 from cryptomvp.analysis.adaptation import assess_adaptation  # noqa: E402
 from cryptomvp.config import load_config  # noqa: E402
+from cryptomvp.data.features import compute_features  # noqa: E402
+from cryptomvp.data.labels import make_directional_labels  # noqa: E402
+from cryptomvp.data.scaling import apply_standard_scaler  # noqa: E402
+from cryptomvp.data.windowing import make_windows  # noqa: E402
 from cryptomvp.features.registry import default_feature_sets_path, load_feature_sets  # noqa: E402
+from cryptomvp.features.registry import resolve_feature_list  # noqa: E402
 from cryptomvp.features.selection import staged_feature_selection  # noqa: E402
+from cryptomvp.sessions import SessionRouter, assign_session_features  # noqa: E402
+from cryptomvp.train.rl_policy import PolicyNet  # noqa: E402
+from cryptomvp.utils.gpu import resolve_device  # noqa: E402
 from cryptomvp.utils.io import reports_dir, run_root  # noqa: E402
 from cryptomvp.utils.logging import get_logger  # noqa: E402
 from cryptomvp.utils.run_dir import init_run_dir  # noqa: E402
@@ -161,6 +170,135 @@ def _load_supervised_metrics(path: Path, prefix: str) -> Dict[str, float]:
     denom = 2 * tp + fp + fn
     f1 = float(2 * tp / denom) if denom > 0 else 0.0
     return {f"{prefix}_accuracy": acc, f"{prefix}_f1": f1}
+
+
+def _load_dataset(path: Path) -> pd.DataFrame:
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path)
+
+
+def _time_split(n: int) -> Tuple[int, int]:
+    train_end = int(n * 0.7)
+    val_end = int(n * 0.85)
+    return train_end, val_end
+
+
+def _load_feature_scaler(scaler_path: Path, feature_cols: List[str]) -> Tuple[np.ndarray, np.ndarray]:
+    if not scaler_path.exists():
+        raise RuntimeError(f"Missing RL feature scaler at {scaler_path}.")
+    data = np.load(scaler_path, allow_pickle=True)
+    scaler_cols = list(data["feature_cols"].tolist())
+    if scaler_cols != feature_cols:
+        raise RuntimeError(
+            "Feature columns mismatch between RL scaler and current evaluation features."
+        )
+    return data["mean"].astype(np.float32), data["std"].astype(np.float32)
+
+
+def _evaluate_rl_policy(
+    policy_path: Path,
+    X_val: np.ndarray,
+    labels: np.ndarray,
+    positive_action: int,
+    device: torch.device,
+    hidden_dim: int,
+) -> Tuple[float, float]:
+    if not policy_path.exists() or len(X_val) == 0:
+        return 0.0, 0.0
+    policy = PolicyNet(input_dim=X_val.shape[1], hidden_dim=hidden_dim).to(device)
+    policy.load_state_dict(torch.load(policy_path, map_location=device))
+    policy.eval()
+    with torch.no_grad():
+        logits = policy(torch.from_numpy(X_val).float().to(device))
+        actions = torch.argmax(logits, dim=1).cpu().numpy()
+    valid_mask = labels != 0
+    if not valid_mask.any():
+        return 0.0, 0.0
+    labels_valid = labels[valid_mask]
+    actions_valid = actions[valid_mask]
+    expected_actions = np.where(labels_valid == 1, positive_action, 1 - positive_action)
+    accuracy = float(np.mean(actions_valid == expected_actions))
+    predicted_positive = actions_valid == positive_action
+    fp = int(np.sum(predicted_positive & (labels_valid != 1)))
+    fn = int(np.sum(~predicted_positive & (labels_valid == 1)))
+    error_balance = float(abs(fp - fn) / max(1, fp + fn))
+    return accuracy, error_balance
+
+
+def _evaluate_rl_validation(
+    cfg: Any,
+    dataset_path: Path,
+    run_dir: Path,
+) -> Dict[str, float]:
+    df = _load_dataset(dataset_path)
+    router = SessionRouter(
+        mode=cfg.session.mode if cfg.session else "fixed_utc_partitions",
+        overlap_policy=cfg.session.overlap_policy if cfg.session else "priority",
+        priority_order=cfg.session.priority_order if cfg.session else None,
+        sessions=None,
+    )
+    df = assign_session_features(df, router)
+    feature_sets_path = (
+        Path(cfg.features.feature_sets_path)
+        if cfg.features.feature_sets_path is not None
+        else None
+    )
+    feature_list = resolve_feature_list(
+        cfg.features.list_of_features,
+        cfg.features.feature_set_id,
+        feature_sets_path=feature_sets_path,
+    )
+    features = compute_features(df, feature_list)
+    X, window_times, feature_cols = make_windows(features, cfg.features.window_size_K)
+    y_up_dir, y_down_dir = make_directional_labels(df, window_times)
+
+    n = min(len(X), len(y_up_dir))
+    X = X[:n]
+    y_up_dir = y_up_dir[:n]
+    y_down_dir = y_down_dir[:n]
+    X_flat = X.reshape(len(X), -1)
+
+    scaler_path = run_dir / "reports" / "rl_up" / "feature_scaler.npz"
+    mean, std = _load_feature_scaler(scaler_path, feature_cols)
+    X_scaled = apply_standard_scaler(X_flat, mean, std)
+    train_end, val_end = _time_split(len(X_scaled))
+    if val_end <= train_end:
+        return {
+            "rl_up_accuracy": 0.0,
+            "rl_down_accuracy": 0.0,
+            "rl_up_error_balance": 0.0,
+            "rl_down_error_balance": 0.0,
+        }
+
+    X_val = X_scaled[train_end:val_end]
+    y_up_val = y_up_dir[train_end:val_end]
+    y_down_val = y_down_dir[train_end:val_end]
+
+    device = resolve_device(cfg.device, cfg.allow_cpu_fallback)
+    rl_up_acc, rl_up_balance = _evaluate_rl_policy(
+        run_dir / "checkpoints" / "rl_up.pt",
+        X_val,
+        y_up_val,
+        positive_action=0,
+        device=device,
+        hidden_dim=cfg.rl.policy_hidden_dim,
+    )
+    rl_down_acc, rl_down_balance = _evaluate_rl_policy(
+        run_dir / "checkpoints" / "rl_down.pt",
+        X_val,
+        y_down_val,
+        positive_action=1,
+        device=device,
+        hidden_dim=cfg.rl.policy_hidden_dim,
+    )
+
+    return {
+        "rl_up_accuracy": rl_up_acc,
+        "rl_down_accuracy": rl_down_acc,
+        "rl_up_error_balance": rl_up_balance,
+        "rl_down_error_balance": rl_down_balance,
+    }
 
 
 def _is_numeric_list(values: List[Any]) -> bool:
@@ -331,6 +469,7 @@ def run_rl_tuner(
         _run_script("scripts/test_train_baseline.py", episode_cfg_path, episode_dir, fast=fast)
         _run_script("scripts/test_train_rl.py", episode_cfg_path, episode_dir, fast=fast)
 
+        episode_loaded = load_config(episode_cfg_path)
         decision_metrics = _load_decision_metrics(
             episode_dir / "reports" / "decision_rule" / "decision_log.parquet"
         )
@@ -350,6 +489,9 @@ def run_rl_tuner(
             episode_dir / "reports" / "rl_down" / "episode_metrics.csv",
             prefix="rl_down",
         )
+        rl_eval_metrics = _evaluate_rl_validation(
+            episode_loaded, dataset_path, episode_dir
+        )
 
         metrics: Dict[str, float] = {}
         metrics.update(decision_metrics)
@@ -357,6 +499,7 @@ def run_rl_tuner(
         metrics.update(sup_down_metrics)
         metrics.update(rl_up_metrics)
         metrics.update(rl_down_metrics)
+        metrics.update(rl_eval_metrics)
 
         reward_base = (
             cfg.tuner.reward.decision_accuracy_weight * metrics["decision_action_accuracy_non_hold"]
@@ -375,6 +518,8 @@ def run_rl_tuner(
             * metrics.get("decision_max_session_conflict_rate", 0.0)
             + cfg.tuner.reward.rl_up_accuracy_weight * metrics["rl_up_accuracy"]
             + cfg.tuner.reward.rl_down_accuracy_weight * metrics["rl_down_accuracy"]
+            - cfg.tuner.reward.rl_up_error_balance_penalty * metrics["rl_up_error_balance"]
+            - cfg.tuner.reward.rl_down_error_balance_penalty * metrics["rl_down_error_balance"]
             - cfg.tuner.reward.rl_up_hold_penalty * metrics["rl_up_hold_rate"]
             - cfg.tuner.reward.rl_down_hold_penalty * metrics["rl_down_hold_rate"]
         )
@@ -620,12 +765,21 @@ def run_rl_tuner(
         f"hold_penalty={cfg.tuner.reward.decision_hold_penalty}",
         f"RL weights: up_acc={cfg.tuner.reward.rl_up_accuracy_weight}, "
         f"down_acc={cfg.tuner.reward.rl_down_accuracy_weight}, "
+        f"up_error_balance_penalty={cfg.tuner.reward.rl_up_error_balance_penalty}, "
+        f"down_error_balance_penalty={cfg.tuner.reward.rl_down_error_balance_penalty}, "
         f"up_hold_penalty={cfg.tuner.reward.rl_up_hold_penalty}, "
         f"down_hold_penalty={cfg.tuner.reward.rl_down_hold_penalty}",
         f"Improve weights: up={cfg.tuner.reward.improve_up_accuracy_weight}, "
         f"down={cfg.tuner.reward.improve_down_accuracy_weight}",
         f"Best reward: {best_state['reward']:.4f}",
         adaptation_line,
+        "",
+        "## RL policy effectiveness",
+        f"- RL UP accuracy (val): {best_state['metrics'].get('rl_up_accuracy', 0.0):.4f}",
+        f"- RL DOWN accuracy (val): {best_state['metrics'].get('rl_down_accuracy', 0.0):.4f}",
+        f"- RL UP error balance: {best_state['metrics'].get('rl_up_error_balance', 0.0):.4f}",
+        f"- RL DOWN error balance: {best_state['metrics'].get('rl_down_error_balance', 0.0):.4f}",
+        "",
         "Best params:",
         json.dumps(best_params, indent=2),
     ]
