@@ -85,10 +85,12 @@ Run `scripts/test_build_dataset.py` first to download and cache the dataset unde
 
 ## RL Tuner Notes
 
-- The tuner runs a **full pipeline** per episode (supervised + RL + decision_rule).
-- Parameter search space is defined under `tuner.param_space` in `configs/mvp.yaml`.
-- `tuner.param_space` uses dotted keys (e.g. `supervised.lr`, `rl.reward.R_hold`, `features.list_of_features`).
-- Each episode starts from scratch (new UP/DOWN models and new RL policies).
+- The tuner supports two modes via `tuner.mode` in `configs/mvp.yaml`:
+  - `agent`: trains RL UP/DOWN policies directly across tuner episodes and evaluates them on a validation split.
+  - `search`: runs a **full pipeline** per episode (supervised + RL + decision_rule) over a parameter search space.
+- For `agent` mode, `tuner.agent_train_episodes` and `tuner.agent_steps_per_episode` control how much RL training is done per tuner episode.
+- For `search` mode, the parameter search space is defined under `tuner.param_space` in `configs/mvp.yaml` and uses dotted keys (e.g. `supervised.lr`, `rl.reward.R_opposite`, `features.list_of_features`).
+- In `search` mode, each episode starts from scratch (new UP/DOWN models and new RL policies).
 
 ## Pytest
 

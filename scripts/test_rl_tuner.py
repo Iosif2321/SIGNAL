@@ -24,15 +24,18 @@ from cryptomvp.analysis.adaptation import assess_adaptation  # noqa: E402
 from cryptomvp.config import load_config  # noqa: E402
 from cryptomvp.data.features import compute_features  # noqa: E402
 from cryptomvp.data.labels import make_directional_labels  # noqa: E402
-from cryptomvp.data.scaling import apply_standard_scaler  # noqa: E402
+from cryptomvp.data.scaling import apply_standard_scaler, fit_standard_scaler  # noqa: E402
 from cryptomvp.data.windowing import make_windows  # noqa: E402
+from cryptomvp.decision.rule import batch_decide  # noqa: E402
 from cryptomvp.features.registry import default_feature_sets_path, load_feature_sets  # noqa: E402
 from cryptomvp.features.registry import resolve_feature_list  # noqa: E402
 from cryptomvp.features.selection import staged_feature_selection  # noqa: E402
 from cryptomvp.sessions import SessionRouter, assign_session_features  # noqa: E402
 from cryptomvp.train.rl_policy import PolicyNet  # noqa: E402
-from cryptomvp.utils.gpu import resolve_device  # noqa: E402
-from cryptomvp.utils.io import reports_dir, run_root  # noqa: E402
+from cryptomvp.train.rl_env import RewardConfig  # noqa: E402
+from cryptomvp.train.rl_train import train_reinforce  # noqa: E402
+from cryptomvp.utils.gpu import require_cuda, resolve_device  # noqa: E402
+from cryptomvp.utils.io import checkpoints_dir, reports_dir, run_root  # noqa: E402
 from cryptomvp.utils.logging import get_logger  # noqa: E402
 from cryptomvp.utils.run_dir import init_run_dir  # noqa: E402
 from cryptomvp.utils.seed import set_seed  # noqa: E402
@@ -138,6 +141,47 @@ def _load_decision_metrics(decision_log_path: Path) -> Dict[str, float]:
     return metrics
 
 
+def _decision_metrics_from_probs(
+    p_up: np.ndarray,
+    p_down: np.ndarray,
+    true_dir: np.ndarray,
+    threshold: float,
+    delta_min: float,
+) -> Dict[str, float]:
+    decisions = batch_decide(p_up, p_down, threshold, delta_min=delta_min)
+    decisions_arr = np.array(decisions, dtype=object)
+    hold_mask = decisions_arr == "HOLD"
+    action_mask = ~hold_mask
+    hold_rate = float(hold_mask.mean()) if len(decisions_arr) else 0.0
+    action_rate = float(action_mask.mean()) if len(decisions_arr) else 0.0
+    conflict_rate = float(np.mean((p_up >= threshold) & (p_down >= threshold))) if len(p_up) else 0.0
+    action_accuracy = 0.0
+    precision_up = 0.0
+    precision_down = 0.0
+    if len(decisions_arr):
+        true_str = np.where(true_dir > 0, "UP", np.where(true_dir < 0, "DOWN", "HOLD"))
+        if action_mask.any():
+            action_accuracy = float(np.mean(decisions_arr[action_mask] == true_str[action_mask]))
+        if (decisions_arr == "UP").any():
+            precision_up = float(np.mean(true_str[decisions_arr == "UP"] == "UP"))
+        if (decisions_arr == "DOWN").any():
+            precision_down = float(np.mean(true_str[decisions_arr == "DOWN"] == "DOWN"))
+    return {
+        "decision_hold_rate": hold_rate,
+        "decision_action_rate": action_rate,
+        "decision_action_accuracy_non_hold": action_accuracy,
+        "decision_conflict_rate": conflict_rate,
+        "decision_precision_up": precision_up,
+        "decision_precision_down": precision_down,
+        "hold_rate": hold_rate,
+        "action_rate": action_rate,
+        "action_accuracy_non_hold": action_accuracy,
+        "conflict_rate": conflict_rate,
+        "precision_up": precision_up,
+        "precision_down": precision_down,
+    }
+
+
 def _load_rl_metrics(metrics_path: Path, prefix: str) -> Dict[str, float]:
     if not metrics_path.exists():
         return {
@@ -196,6 +240,40 @@ def _load_feature_scaler(scaler_path: Path, feature_cols: List[str]) -> Tuple[np
     return data["mean"].astype(np.float32), data["std"].astype(np.float32)
 
 
+def _evaluate_policy_state(
+    state_dict: Dict[str, torch.Tensor] | None,
+    X_val: np.ndarray,
+    labels: np.ndarray,
+    positive_action: int,
+    device: torch.device,
+    hidden_dim: int,
+    margin_threshold: float,
+) -> Tuple[float, float, float, np.ndarray]:
+    if state_dict is None or len(X_val) == 0:
+        return 0.0, 0.0, 0.0, np.zeros((len(X_val), 2), dtype=np.float32)
+    policy = PolicyNet(input_dim=X_val.shape[1], hidden_dim=hidden_dim).to(device)
+    policy.load_state_dict(state_dict)
+    policy.eval()
+    with torch.no_grad():
+        logits = policy(torch.from_numpy(X_val).float().to(device))
+        probs = torch.softmax(logits, dim=1).cpu().numpy()
+        actions = np.argmax(probs, axis=1)
+    valid_mask = labels != 0
+    if not valid_mask.any():
+        return 0.0, 0.0, 0.0, probs
+    labels_valid = labels[valid_mask]
+    actions_valid = actions[valid_mask]
+    expected_actions = np.where(labels_valid == 1, positive_action, 1 - positive_action)
+    accuracy = float(np.mean(actions_valid == expected_actions))
+    predicted_positive = actions_valid == positive_action
+    fp = int(np.sum(predicted_positive & (labels_valid != 1)))
+    fn = int(np.sum(~predicted_positive & (labels_valid == 1)))
+    error_balance = float(abs(fp - fn) / max(1, fp + fn))
+    margin = np.abs(probs[:, 0] - probs[:, 1])
+    low_margin_rate = float(np.mean(margin < margin_threshold)) if margin_threshold > 0 else 0.0
+    return accuracy, error_balance, low_margin_rate, probs
+
+
 def _evaluate_rl_policy(
     policy_path: Path,
     X_val: np.ndarray,
@@ -224,6 +302,59 @@ def _evaluate_rl_policy(
     fn = int(np.sum(~predicted_positive & (labels_valid == 1)))
     error_balance = float(abs(fp - fn) / max(1, fp + fn))
     return accuracy, error_balance
+
+
+def _prepare_rl_arrays(cfg: Any, dataset_path: Path) -> Dict[str, Any]:
+    df = _load_dataset(dataset_path)
+    router = SessionRouter(
+        mode=cfg.session.mode if cfg.session else "fixed_utc_partitions",
+        overlap_policy=cfg.session.overlap_policy if cfg.session else "priority",
+        priority_order=cfg.session.priority_order if cfg.session else None,
+        sessions=None,
+    )
+    df = assign_session_features(df, router)
+    feature_sets_path = (
+        Path(cfg.features.feature_sets_path)
+        if cfg.features.feature_sets_path is not None
+        else None
+    )
+    feature_list = resolve_feature_list(
+        cfg.features.list_of_features,
+        cfg.features.feature_set_id,
+        feature_sets_path=feature_sets_path,
+    )
+    features = compute_features(df, feature_list)
+    X, window_times, feature_cols = make_windows(features, cfg.features.window_size_K)
+    y_up_dir, y_down_dir = make_directional_labels(df, window_times)
+    n = min(len(X), len(y_up_dir))
+    X = X[:n]
+    y_up_dir = y_up_dir[:n]
+    y_down_dir = y_down_dir[:n]
+    X_flat = X.reshape(len(X), -1)
+    scaler_path = run_root() / "reports" / "rl_tuner" / "feature_scaler.npz"
+    scaler_path.parent.mkdir(parents=True, exist_ok=True)
+    if scaler_path.exists():
+        mean, std = _load_feature_scaler(scaler_path, feature_cols)
+    else:
+        mean, std = fit_standard_scaler(X_flat)
+        np.savez(
+            scaler_path,
+            mean=mean.astype(np.float32),
+            std=std.astype(np.float32),
+            feature_cols=np.array(feature_cols, dtype=object),
+        )
+    X_scaled = apply_standard_scaler(X_flat, mean, std)
+    train_end, val_end = _time_split(len(X_scaled))
+    if val_end <= train_end:
+        raise RuntimeError("Not enough samples for RL tuner split.")
+    return {
+        "X_train": X_scaled[:train_end],
+        "X_val": X_scaled[train_end:val_end],
+        "y_up_train": y_up_dir[:train_end],
+        "y_up_val": y_up_dir[train_end:val_end],
+        "y_down_train": y_down_dir[:train_end],
+        "y_down_val": y_down_dir[train_end:val_end],
+    }
 
 
 def _evaluate_rl_validation(
@@ -299,6 +430,310 @@ def _evaluate_rl_validation(
         "rl_up_error_balance": rl_up_balance,
         "rl_down_error_balance": rl_down_balance,
     }
+
+
+def run_rl_tuner_agent(
+    cfg: Any,
+    config_path: str,
+    fast: bool,
+    run_dir: Path | None,
+    episodes_override: int | None,
+) -> None:
+    logger = get_logger("rl_tuner")
+    dataset_path = Path(cfg.dataset.output_path).resolve()
+    if not dataset_path.exists():
+        logger.info("Dataset not found; building dataset once before tuning.")
+        _run_script("scripts/test_build_dataset.py", Path(config_path), run_root(), fast=False)
+    if not dataset_path.exists():
+        raise RuntimeError(f"Dataset still missing at {dataset_path}.")
+
+    report_dir = reports_dir("rl_tuner")
+    fig_dir = report_dir / "figures"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    arrays = _prepare_rl_arrays(cfg, dataset_path)
+    X_train = arrays["X_train"]
+    X_val = arrays["X_val"]
+    y_up_train = arrays["y_up_train"]
+    y_up_val = arrays["y_up_val"]
+    y_down_train = arrays["y_down_train"]
+    y_down_val = arrays["y_down_val"]
+
+    reward_cfg = RewardConfig(
+        R_correct=cfg.rl.reward.R_correct,
+        R_wrong=cfg.rl.reward.R_wrong,
+        R_opposite=cfg.rl.reward.R_opposite,
+        margin_threshold=cfg.rl.reward.margin_threshold,
+        margin_penalty=cfg.rl.reward.margin_penalty,
+    )
+
+    if episodes_override is not None:
+        episodes = int(episodes_override)
+    else:
+        episodes = 2 if fast else cfg.tuner.episodes
+    train_episodes = 1 if fast else cfg.tuner.agent_train_episodes
+    steps_per_episode = 50 if fast else cfg.tuner.agent_steps_per_episode
+    device = require_cuda()
+
+    up_state: Dict[str, torch.Tensor] | None = None
+    down_state: Dict[str, torch.Tensor] | None = None
+    prev_metrics: Dict[str, float] | None = None
+    best_reward = -float("inf")
+    best_state: Dict[str, Any] | None = None
+    results: List[Dict[str, Any]] = []
+
+    for ep in range(1, episodes + 1):
+        up_policy, up_hist = train_reinforce(
+            X_train,
+            y_up_train,
+            episodes=train_episodes,
+            steps_per_episode=steps_per_episode,
+            lr=cfg.rl.lr,
+            gamma=cfg.rl.gamma,
+            reward_cfg=reward_cfg,
+            policy_hidden_dim=cfg.rl.policy_hidden_dim,
+            entropy_bonus=cfg.rl.entropy_bonus,
+            seed=cfg.seed + ep,
+            track_diagnostics=True,
+            track_steps=False,
+            model_name="tuner_up",
+            device=device,
+            init_state=up_state,
+        )
+        up_state = up_policy.state_dict()
+
+        down_policy, down_hist = train_reinforce(
+            X_train,
+            y_down_train,
+            episodes=train_episodes,
+            steps_per_episode=steps_per_episode,
+            lr=cfg.rl.lr,
+            gamma=cfg.rl.gamma,
+            reward_cfg=reward_cfg,
+            policy_hidden_dim=cfg.rl.policy_hidden_dim,
+            entropy_bonus=cfg.rl.entropy_bonus,
+            seed=cfg.seed + ep + 100,
+            track_diagnostics=True,
+            track_steps=False,
+            model_name="tuner_down",
+            label_action_map={1: 1, -1: 0},
+            device=device,
+            init_state=down_state,
+        )
+        down_state = down_policy.state_dict()
+
+        rl_up_acc, rl_up_balance, rl_up_low_margin, up_probs = _evaluate_policy_state(
+            up_state,
+            X_val,
+            y_up_val,
+            positive_action=0,
+            device=device,
+            hidden_dim=cfg.rl.policy_hidden_dim,
+            margin_threshold=reward_cfg.margin_threshold,
+        )
+        rl_down_acc, rl_down_balance, rl_down_low_margin, down_probs = _evaluate_policy_state(
+            down_state,
+            X_val,
+            y_down_val,
+            positive_action=1,
+            device=device,
+            hidden_dim=cfg.rl.policy_hidden_dim,
+            margin_threshold=reward_cfg.margin_threshold,
+        )
+
+        p_up = up_probs[:, 0] if len(up_probs) else np.array([])
+        p_down = down_probs[:, 1] if len(down_probs) else np.array([])
+        decision_metrics = _decision_metrics_from_probs(
+            p_up,
+            p_down,
+            y_up_val,
+            threshold=cfg.decision_rule.T_min,
+            delta_min=cfg.decision_rule.delta_min,
+        )
+
+        metrics: Dict[str, float] = {}
+        metrics.update(decision_metrics)
+        metrics.update(
+            {
+                "rl_up_accuracy": rl_up_acc,
+                "rl_down_accuracy": rl_down_acc,
+                "rl_up_error_balance": rl_up_balance,
+                "rl_down_error_balance": rl_down_balance,
+                "rl_up_hold_rate": rl_up_low_margin,
+                "rl_down_hold_rate": rl_down_low_margin,
+            }
+        )
+
+        reward_base = (
+            cfg.tuner.reward.decision_accuracy_weight * metrics["decision_action_accuracy_non_hold"]
+            + cfg.tuner.reward.decision_action_rate_weight * metrics["decision_action_rate"]
+            - cfg.tuner.reward.decision_conflict_penalty * metrics["decision_conflict_rate"]
+            - cfg.tuner.reward.decision_hold_penalty * metrics["decision_hold_rate"]
+            + cfg.tuner.reward.rl_up_accuracy_weight * metrics["rl_up_accuracy"]
+            + cfg.tuner.reward.rl_down_accuracy_weight * metrics["rl_down_accuracy"]
+            - cfg.tuner.reward.rl_up_error_balance_penalty * metrics["rl_up_error_balance"]
+            - cfg.tuner.reward.rl_down_error_balance_penalty * metrics["rl_down_error_balance"]
+            - cfg.tuner.reward.rl_up_hold_penalty * metrics["rl_up_hold_rate"]
+            - cfg.tuner.reward.rl_down_hold_penalty * metrics["rl_down_hold_rate"]
+        )
+        metrics["score_base"] = float(reward_base)
+
+        prev_up = prev_metrics.get("rl_up_accuracy", 0.0) if prev_metrics else 0.0
+        prev_down = prev_metrics.get("rl_down_accuracy", 0.0) if prev_metrics else 0.0
+        delta_up = float(metrics["rl_up_accuracy"] - prev_up)
+        delta_down = float(metrics["rl_down_accuracy"] - prev_down)
+        improve_up = max(0.0, delta_up)
+        improve_down = max(0.0, delta_down)
+        reward_improve = (
+            cfg.tuner.reward.improve_up_accuracy_weight * improve_up
+            + cfg.tuner.reward.improve_down_accuracy_weight * improve_down
+        )
+        reward_total = float(reward_base + reward_improve)
+        metrics["score_improve"] = float(reward_improve)
+        metrics["score"] = reward_total
+        metrics["delta_up_accuracy"] = float(delta_up)
+        metrics["delta_down_accuracy"] = float(delta_down)
+        metrics["improve_up_accuracy"] = float(improve_up)
+        metrics["improve_down_accuracy"] = float(improve_down)
+
+        adaptation_good = None
+        adaptation_failures: list[str] = []
+        if cfg.adaptation is not None:
+            good, failures = assess_adaptation(metrics, cfg.adaptation)
+            adaptation_good = int(good)
+            adaptation_failures = failures
+            metrics["adaptation_good"] = float(adaptation_good)
+
+        if reward_total > best_reward:
+            best_reward = reward_total
+            best_state = {
+                "episode": ep,
+                "reward": reward_total,
+                "metrics": dict(metrics),
+            }
+
+        results.append(
+            {
+                "episode": ep,
+                "reward": reward_total,
+                "best_reward": best_reward,
+                "adaptation_good": adaptation_good if adaptation_good is not None else -1,
+                "adaptation_failures": ";".join(adaptation_failures) if adaptation_failures else "",
+                "up_last_reward": up_hist.rewards[-1] if up_hist.rewards else 0.0,
+                "down_last_reward": down_hist.rewards[-1] if down_hist.rewards else 0.0,
+                **metrics,
+            }
+        )
+        prev_metrics = metrics
+        logger.info(
+            "Agent episode %s/%s - reward=%.4f best=%.4f",
+            ep,
+            episodes,
+            reward_total,
+            best_reward,
+        )
+
+    if up_state is not None:
+        torch.save(up_state, checkpoints_dir() / "rl_up.pt")
+    if down_state is not None:
+        torch.save(down_state, checkpoints_dir() / "rl_down.pt")
+
+    history_df = pd.DataFrame(results)
+    history_df.to_csv(report_dir / "episode_metrics.csv", index=False)
+    episodes_idx = history_df["episode"].to_numpy()
+    plot_series_with_band(
+        episodes_idx,
+        history_df["reward"].to_numpy(),
+        window=cfg.viz.moving_window,
+        title="Agent Reward per Episode (RL UP/DOWN)",
+        xlabel="Episode",
+        ylabel="Reward",
+        label="reward",
+        out_base=fig_dir / "reward_per_episode",
+        formats=cfg.viz.save_formats,
+    )
+    plot_series_with_band(
+        episodes_idx,
+        history_df["rl_up_accuracy"].to_numpy(),
+        window=cfg.viz.moving_window,
+        title="RL UP Accuracy (val)",
+        xlabel="Episode",
+        ylabel="Accuracy",
+        label="rl_up_accuracy",
+        out_base=fig_dir / "rl_up_accuracy_per_episode",
+        formats=cfg.viz.save_formats,
+    )
+    plot_series_with_band(
+        episodes_idx,
+        history_df["rl_down_accuracy"].to_numpy(),
+        window=cfg.viz.moving_window,
+        title="RL DOWN Accuracy (val)",
+        xlabel="Episode",
+        ylabel="Accuracy",
+        label="rl_down_accuracy",
+        out_base=fig_dir / "rl_down_accuracy_per_episode",
+        formats=cfg.viz.save_formats,
+    )
+    plot_series_with_band(
+        episodes_idx,
+        history_df["decision_action_accuracy_non_hold"].to_numpy(),
+        window=cfg.viz.moving_window,
+        title="Decision Accuracy (non-hold)",
+        xlabel="Episode",
+        ylabel="Accuracy",
+        label="decision_accuracy",
+        out_base=fig_dir / "decision_accuracy_per_episode",
+        formats=cfg.viz.save_formats,
+    )
+    plot_series_with_band(
+        episodes_idx,
+        history_df["decision_hold_rate"].to_numpy(),
+        window=cfg.viz.moving_window,
+        title="Decision Hold Rate",
+        xlabel="Episode",
+        ylabel="Hold rate",
+        label="decision_hold_rate",
+        out_base=fig_dir / "decision_hold_rate_per_episode",
+        formats=cfg.viz.save_formats,
+    )
+
+    adaptation_line = "Adaptation good rate: n/a"
+    if cfg.adaptation is not None and "adaptation_good" in history_df.columns:
+        good_rate = float((history_df["adaptation_good"] == 1).mean())
+        adaptation_line = f"Adaptation good rate: {good_rate:.4f}"
+
+    best_state = best_state or {"episode": 0, "reward": best_reward, "metrics": {}}
+    summary_lines = [
+        "# RL Tuner Summary (Agent Mode)",
+        f"Symbol: {cfg.symbol}",
+        f"Interval: {cfg.interval}",
+        f"Seed: {cfg.seed}",
+        f"Episodes: {episodes}",
+        f"Agent train episodes per step: {train_episodes}",
+        f"Agent steps per episode: {steps_per_episode}",
+        f"Decision weights: acc={cfg.tuner.reward.decision_accuracy_weight}, "
+        f"action={cfg.tuner.reward.decision_action_rate_weight}, "
+        f"conflict_penalty={cfg.tuner.reward.decision_conflict_penalty}, "
+        f"hold_penalty={cfg.tuner.reward.decision_hold_penalty}",
+        f"RL weights: up_acc={cfg.tuner.reward.rl_up_accuracy_weight}, "
+        f"down_acc={cfg.tuner.reward.rl_down_accuracy_weight}, "
+        f"up_error_balance_penalty={cfg.tuner.reward.rl_up_error_balance_penalty}, "
+        f"down_error_balance_penalty={cfg.tuner.reward.rl_down_error_balance_penalty}, "
+        f"up_hold_penalty={cfg.tuner.reward.rl_up_hold_penalty}, "
+        f"down_hold_penalty={cfg.tuner.reward.rl_down_hold_penalty}",
+        f"Improve weights: up={cfg.tuner.reward.improve_up_accuracy_weight}, "
+        f"down={cfg.tuner.reward.improve_down_accuracy_weight}",
+        f"Best reward: {best_state['reward']:.4f}",
+        adaptation_line,
+        "",
+        "## RL policy effectiveness",
+        f"- RL UP accuracy (val): {best_state['metrics'].get('rl_up_accuracy', 0.0):.4f}",
+        f"- RL DOWN accuracy (val): {best_state['metrics'].get('rl_down_accuracy', 0.0):.4f}",
+        f"- RL UP error balance: {best_state['metrics'].get('rl_up_error_balance', 0.0):.4f}",
+        f"- RL DOWN error balance: {best_state['metrics'].get('rl_down_error_balance', 0.0):.4f}",
+    ]
+    (report_dir / "summary.md").write_text("\n".join(summary_lines), encoding="utf-8")
+    logger.info("RL tuner agent report written to %s", report_dir)
 
 
 def _is_numeric_list(values: List[Any]) -> bool:
@@ -394,6 +829,9 @@ def run_rl_tuner(
         raise RuntimeError("Missing tuner config in YAML.")
     logger = get_logger("rl_tuner")
     set_seed(cfg.seed)
+    if cfg.tuner.mode == "agent":
+        run_rl_tuner_agent(cfg, config_path, fast, run_dir, episodes_override)
+        return
 
     base_cfg = yaml.safe_load(Path(config_path).read_text())
     param_space = cfg.tuner.param_space
