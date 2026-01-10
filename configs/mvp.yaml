@@ -89,10 +89,10 @@ tuner:
   entropy_bonus: 0.01
   lr: 0.1
   reward:
-    decision_accuracy_weight: 0.0
-    decision_action_rate_weight: 0.0
-    decision_conflict_penalty: 0.0
-    decision_hold_penalty: 0.0
+    decision_accuracy_weight: 0.3
+    decision_action_rate_weight: 0.2
+    decision_conflict_penalty: 0.2
+    decision_hold_penalty: 0.2
     decision_min_session_accuracy_weight: 0.0
     decision_min_session_precision_up_weight: 0.0
     decision_min_session_precision_down_weight: 0.0
