@@ -228,6 +228,31 @@ def _time_split(n: int) -> Tuple[int, int]:
     return train_end, val_end
 
 
+def _time_split_with_online(n: int, online_ratio: float) -> Tuple[int, int, int]:
+    if online_ratio < 0 or online_ratio >= 1:
+        raise ValueError("online_split_ratio must be in [0, 1).")
+    online_size = int(n * online_ratio)
+    if online_ratio > 0 and online_size == 0 and n > 0:
+        online_size = 1
+    online_start = n - online_size if online_size > 0 else n
+    train_end, val_end = _time_split(online_start)
+    return train_end, val_end, online_start
+
+
+def _window_split_indices(
+    train_size: int,
+    val_size: int,
+    online_start: int,
+    window_start: int,
+) -> Tuple[int, int, int, int]:
+    max_start = max(0, online_start - (train_size + val_size))
+    start = min(max(window_start, 0), max_start)
+    train_start = start
+    train_end = train_start + train_size
+    val_end = train_end + val_size
+    return train_start, train_end, val_end, max_start
+
+
 def _load_feature_scaler(scaler_path: Path, feature_cols: List[str]) -> Tuple[np.ndarray, np.ndarray]:
     if not scaler_path.exists():
         raise RuntimeError(f"Missing RL feature scaler at {scaler_path}.")
@@ -999,6 +1024,15 @@ def run_rl_tuner(
     prev_metrics: Dict[str, float] | None = None
     results: List[Dict[str, Any]] = []
     param_count = max(1, len(param_space))
+    stability_window = max(1, cfg.viz.moving_window)
+    reward_history: List[float] = []
+    accuracy_history: List[float] = []
+
+    def rolling_variance(history: List[float], current: float, window: int) -> float:
+        values = (history + [current])[-window:]
+        if len(values) < 2:
+            return 0.0
+        return float(np.var(values))
 
     for ep in range(1, episodes + 1):
         params, mutated_keys, explored = _propose_params(
@@ -1013,6 +1047,17 @@ def run_rl_tuner(
         )
 
         metrics = evaluate_sample(params)
+        reward_base_raw = float(metrics.get("score_base", 0.0))
+        variance_reward = rolling_variance(reward_history, reward_base_raw, stability_window)
+        variance_accuracy = rolling_variance(
+            accuracy_history,
+            float(metrics.get("decision_action_accuracy_non_hold", 0.0)),
+            stability_window,
+        )
+        reward_base = reward_base_raw - cfg.tuner.reward.stability_penalty * variance_reward
+        metrics["score_base"] = float(reward_base)
+        metrics["reward_variance"] = float(variance_reward)
+        metrics["accuracy_variance"] = float(variance_accuracy)
 
         prev_up = prev_metrics.get("sup_up_accuracy", 0.0) if prev_metrics else 0.0
         prev_down = prev_metrics.get("sup_down_accuracy", 0.0) if prev_metrics else 0.0
@@ -1025,7 +1070,7 @@ def run_rl_tuner(
             cfg.tuner.reward.improve_up_accuracy_weight * improve_up
             + cfg.tuner.reward.improve_down_accuracy_weight * improve_down
         )
-        reward_total = float(metrics.get("score_base", 0.0) + reward_improve)
+        reward_total = float(reward_base + reward_improve)
         metrics["score_improve"] = float(reward_improve)
         metrics["score"] = reward_total
         metrics["delta_up_accuracy"] = float(delta_up)
@@ -1050,6 +1095,8 @@ def run_rl_tuner(
                 "metrics": dict(metrics),
             }
 
+        reward_history.append(float(reward_base_raw))
+        accuracy_history.append(float(metrics.get("decision_action_accuracy_non_hold", 0.0)))
         results.append(
             {
                 "episode": ep,
@@ -1214,7 +1261,12 @@ def run_rl_tuner(
         f"Interval: {cfg.interval}",
         f"Seed: {cfg.seed}",
         f"Episodes: {episodes}",
+        f"Online split ratio: {cfg.tuner.online_split_ratio}",
         f"Param space entries: {len(param_space)}",
+        f"Reward variance (last {stability_window}): "
+        f"{best_state['metrics'].get('reward_variance', 0.0):.4f}",
+        f"Accuracy variance (last {stability_window}): "
+        f"{best_state['metrics'].get('accuracy_variance', 0.0):.4f}",
         f"Search explore_prob: {cfg.tuner.search.explore_prob}",
         f"Search mutate_prob: {cfg.tuner.search.mutate_prob}",
         f"Search max_mutations: {cfg.tuner.search.max_mutations}",
@@ -1227,6 +1279,8 @@ def run_rl_tuner(
         f"hold_penalty={cfg.tuner.reward.decision_hold_penalty}",
         f"RL weights: up_acc={cfg.tuner.reward.rl_up_accuracy_weight}, "
         f"down_acc={cfg.tuner.reward.rl_down_accuracy_weight}, "
+        f"online_up_acc={cfg.tuner.reward.online_rl_up_accuracy_weight}, "
+        f"online_down_acc={cfg.tuner.reward.online_rl_down_accuracy_weight}, "
         f"up_error_balance_penalty={cfg.tuner.reward.rl_up_error_balance_penalty}, "
         f"down_error_balance_penalty={cfg.tuner.reward.rl_down_error_balance_penalty}, "
         f"up_hold_penalty={cfg.tuner.reward.rl_up_hold_penalty}, "
@@ -1239,6 +1293,8 @@ def run_rl_tuner(
         "## RL policy effectiveness",
         f"- RL UP accuracy (val): {best_state['metrics'].get('rl_up_accuracy', 0.0):.4f}",
         f"- RL DOWN accuracy (val): {best_state['metrics'].get('rl_down_accuracy', 0.0):.4f}",
+        f"- RL UP accuracy (online): {best_state['metrics'].get('online_rl_up_accuracy', 0.0):.4f}",
+        f"- RL DOWN accuracy (online): {best_state['metrics'].get('online_rl_down_accuracy', 0.0):.4f}",
         f"- RL UP error balance: {best_state['metrics'].get('rl_up_error_balance', 0.0):.4f}",
         f"- RL DOWN error balance: {best_state['metrics'].get('rl_down_error_balance', 0.0):.4f}",
         "",

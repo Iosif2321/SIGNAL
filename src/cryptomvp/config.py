@@ -94,12 +94,16 @@ class TunerRewardConfig:
     decision_hold_penalty: float
     rl_up_accuracy_weight: float
     rl_down_accuracy_weight: float
+    online_rl_up_accuracy_weight: float
+    online_rl_down_accuracy_weight: float
     rl_up_error_balance_penalty: float
     rl_down_error_balance_penalty: float
     rl_up_hold_penalty: float
     rl_down_hold_penalty: float
     improve_up_accuracy_weight: float
     improve_down_accuracy_weight: float
+    anchor_penalty: float = 0.0
+    stability_penalty: float = 0.0
     decision_min_session_accuracy_weight: float = 0.0
     decision_min_session_precision_up_weight: float = 0.0
     decision_min_session_precision_down_weight: float = 0.0
@@ -340,6 +344,12 @@ def load_config(path: str | Path) -> Config:
             decision_hold_penalty=float(tuner["reward"]["decision_hold_penalty"]),
             rl_up_accuracy_weight=float(tuner["reward"].get("rl_up_accuracy_weight", 0.0)),
             rl_down_accuracy_weight=float(tuner["reward"].get("rl_down_accuracy_weight", 0.0)),
+            online_rl_up_accuracy_weight=float(
+                tuner["reward"].get("online_rl_up_accuracy_weight", 0.0)
+            ),
+            online_rl_down_accuracy_weight=float(
+                tuner["reward"].get("online_rl_down_accuracy_weight", 0.0)
+            ),
             rl_up_error_balance_penalty=float(
                 tuner["reward"].get("rl_up_error_balance_penalty", 0.0)
             ),
@@ -354,6 +364,8 @@ def load_config(path: str | Path) -> Config:
             improve_down_accuracy_weight=float(
                 tuner["reward"].get("improve_down_accuracy_weight", 0.0)
             ),
+            anchor_penalty=float(tuner["reward"].get("anchor_penalty", 0.0)),
+            stability_penalty=float(tuner["reward"].get("stability_penalty", 0.0)),
             decision_min_session_accuracy_weight=float(
                 tuner["reward"].get("decision_min_session_accuracy_weight", 0.0)
             ),
