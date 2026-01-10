@@ -1,0 +1,1475 @@
+features:
+  - id: returns
+    name: returns
+    category: price
+    required_columns: [close]
+    params: {window: 1}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Close-to-close percent return.
+  - id: log_returns
+    name: log_returns
+    category: price
+    required_columns: [close]
+    params: {window: 1}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Log return of close.
+  - id: return_3
+    name: return_3
+    category: price
+    required_columns: [close]
+    params: {window: 3}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 4
+    requires_extra_data: false
+    description: Percent return over 3 bars.
+  - id: return_5
+    name: return_5
+    category: price
+    required_columns: [close]
+    params: {window: 5}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 6
+    requires_extra_data: false
+    description: Percent return over 5 bars.
+  - id: return_10
+    name: return_10
+    category: price
+    required_columns: [close]
+    params: {window: 10}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 11
+    requires_extra_data: false
+    description: Percent return over 10 bars.
+  - id: return_sign
+    name: return_sign
+    category: price
+    required_columns: [close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Sign of close return.
+  - id: up_streak
+    name: up_streak
+    category: price
+    required_columns: [close]
+    params: {}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Length of current up streak.
+  - id: down_streak
+    name: down_streak
+    category: price
+    required_columns: [close]
+    params: {}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Length of current down streak.
+  - id: gap
+    name: gap
+    category: price
+    required_columns: [open, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Open minus previous close.
+  - id: gap_pct
+    name: gap_pct
+    category: price
+    required_columns: [open, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Gap percent vs previous close.
+  - id: close_pos_range
+    name: close_pos_range
+    category: price
+    required_columns: [high, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Close position within range.
+  - id: typical_price
+    name: typical_price
+    category: price
+    required_columns: [high, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Typical price (H+L+C)/3.
+  - id: ohlc4
+    name: ohlc4
+    category: price
+    required_columns: [open, high, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: OHLC4 average.
+  - id: hlc3
+    name: hlc3
+    category: price
+    required_columns: [high, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: HLC3 average.
+
+  - id: body
+    name: body
+    category: candlestick
+    required_columns: [open, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Candle body normalized by close.
+  - id: abs_body
+    name: abs_body
+    category: candlestick
+    required_columns: [open, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Absolute body normalized by close.
+  - id: body_pct
+    name: body_pct
+    category: candlestick
+    required_columns: [open, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Body normalized by open.
+  - id: range
+    name: range
+    category: candlestick
+    required_columns: [high, low]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: High-low range normalized by close.
+  - id: range_pct
+    name: range_pct
+    category: candlestick
+    required_columns: [high, low, open]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: High-low range normalized by open.
+  - id: upper_wick
+    name: upper_wick
+    category: candlestick
+    required_columns: [open, high, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Upper wick normalized by close.
+  - id: lower_wick
+    name: lower_wick
+    category: candlestick
+    required_columns: [open, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Lower wick normalized by close.
+  - id: body_to_range
+    name: body_to_range
+    category: candlestick
+    required_columns: [open, high, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Body size to full range ratio.
+  - id: wick_to_range
+    name: wick_to_range
+    category: candlestick
+    required_columns: [open, high, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Wick size to range ratio.
+  - id: doji_ratio
+    name: doji_ratio
+    category: candlestick
+    required_columns: [open, high, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Absolute body divided by range.
+  - id: engulfing_strength
+    name: engulfing_strength
+    category: candlestick
+    required_columns: [open, high, low, close]
+    params: {}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Continuous engulfing strength.
+  - id: up_count_10
+    name: up_count_10
+    category: candlestick
+    required_columns: [close]
+    params: {window: 10}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 11
+    requires_extra_data: false
+    description: Rolling count of up candles (10).
+  - id: down_count_10
+    name: down_count_10
+    category: candlestick
+    required_columns: [close]
+    params: {window: 10}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 11
+    requires_extra_data: false
+    description: Rolling count of down candles (10).
+
+  - id: sma_5
+    name: sma_5
+    category: trend
+    required_columns: [close]
+    params: {window: 5}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 6
+    requires_extra_data: false
+    description: SMA 5 normalized by close.
+  - id: sma_10
+    name: sma_10
+    category: trend
+    required_columns: [close]
+    params: {window: 10}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 11
+    requires_extra_data: false
+    description: SMA 10 normalized by close.
+  - id: sma_20
+    name: sma_20
+    category: trend
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: SMA 20 normalized by close.
+  - id: sma_50
+    name: sma_50
+    category: trend
+    required_columns: [close]
+    params: {window: 50}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 51
+    requires_extra_data: false
+    description: SMA 50 normalized by close.
+  - id: ema_5
+    name: ema_5
+    category: trend
+    required_columns: [close]
+    params: {window: 5}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 6
+    requires_extra_data: false
+    description: EMA 5 normalized by close.
+  - id: ema_10
+    name: ema_10
+    category: trend
+    required_columns: [close]
+    params: {window: 10}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 11
+    requires_extra_data: false
+    description: EMA 10 normalized by close.
+  - id: ema_12
+    name: ema_12
+    category: trend
+    required_columns: [close]
+    params: {window: 12}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 13
+    requires_extra_data: false
+    description: EMA 12 normalized by close.
+  - id: ema_20
+    name: ema_20
+    category: trend
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: EMA 20 normalized by close.
+  - id: ema_26
+    name: ema_26
+    category: trend
+    required_columns: [close]
+    params: {window: 26}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 27
+    requires_extra_data: false
+    description: EMA 26 normalized by close.
+  - id: ema_50
+    name: ema_50
+    category: trend
+    required_columns: [close]
+    params: {window: 50}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 51
+    requires_extra_data: false
+    description: EMA 50 normalized by close.
+  - id: ema_diff
+    name: ema_diff
+    category: trend
+    required_columns: [close]
+    params: {fast: 12, slow: 26}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 27
+    requires_extra_data: false
+    description: EMA12 minus EMA26 normalized by close.
+  - id: sma_slope_20
+    name: sma_slope_20
+    category: trend
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Slope of SMA20.
+  - id: ema_slope_20
+    name: ema_slope_20
+    category: trend
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Slope of EMA20.
+  - id: macd
+    name: macd
+    category: trend
+    required_columns: [close]
+    params: {fast: 12, slow: 26}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 27
+    requires_extra_data: false
+    description: MACD line.
+  - id: macd_signal
+    name: macd_signal
+    category: trend
+    required_columns: [close]
+    params: {fast: 12, slow: 26, signal: 9}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 36
+    requires_extra_data: false
+    description: MACD signal line.
+  - id: macd_hist
+    name: macd_hist
+    category: trend
+    required_columns: [close]
+    params: {fast: 12, slow: 26, signal: 9}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 36
+    requires_extra_data: false
+    description: MACD histogram.
+  - id: rsi_7
+    name: rsi_7
+    category: trend
+    required_columns: [close]
+    params: {window: 7}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 8
+    requires_extra_data: false
+    description: RSI 7 normalized to 0..1.
+  - id: rsi_14
+    name: rsi_14
+    category: trend
+    required_columns: [close]
+    params: {window: 14}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 15
+    requires_extra_data: false
+    description: RSI 14 normalized to 0..1.
+  - id: rsi_21
+    name: rsi_21
+    category: trend
+    required_columns: [close]
+    params: {window: 21}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 22
+    requires_extra_data: false
+    description: RSI 21 normalized to 0..1.
+  - id: stoch_k_14
+    name: stoch_k_14
+    category: trend
+    required_columns: [high, low, close]
+    params: {window: 14}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 15
+    requires_extra_data: false
+    description: Stochastic K (14).
+  - id: stoch_d_3
+    name: stoch_d_3
+    category: trend
+    required_columns: [high, low, close]
+    params: {window: 3}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 16
+    requires_extra_data: false
+    description: Stochastic D (3) from K14.
+  - id: roc_5
+    name: roc_5
+    category: trend
+    required_columns: [close]
+    params: {window: 5}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 6
+    requires_extra_data: false
+    description: Rate of change over 5 bars.
+  - id: roc_10
+    name: roc_10
+    category: trend
+    required_columns: [close]
+    params: {window: 10}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 11
+    requires_extra_data: false
+    description: Rate of change over 10 bars.
+  - id: momentum_5
+    name: momentum_5
+    category: trend
+    required_columns: [close]
+    params: {window: 5}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 6
+    requires_extra_data: false
+    description: Momentum 5 (pct change).
+  - id: momentum_10
+    name: momentum_10
+    category: trend
+    required_columns: [close]
+    params: {window: 10}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 11
+    requires_extra_data: false
+    description: Momentum 10 (pct change).
+  - id: cci_20
+    name: cci_20
+    category: trend
+    required_columns: [high, low, close]
+    params: {window: 20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Commodity Channel Index (20).
+  - id: williams_r_14
+    name: williams_r_14
+    category: trend
+    required_columns: [high, low, close]
+    params: {window: 14}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 15
+    requires_extra_data: false
+    description: Williams %R (14).
+  - id: aroon_up_25
+    name: aroon_up_25
+    category: trend
+    required_columns: [high]
+    params: {window: 25}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 26
+    requires_extra_data: false
+    description: Aroon up (25).
+  - id: aroon_down_25
+    name: aroon_down_25
+    category: trend
+    required_columns: [low]
+    params: {window: 25}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 26
+    requires_extra_data: false
+    description: Aroon down (25).
+  - id: adx_14
+    name: adx_14
+    category: trend
+    required_columns: [high, low, close]
+    params: {window: 14}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 15
+    requires_extra_data: false
+    description: ADX (14).
+  - id: plus_di_14
+    name: plus_di_14
+    category: trend
+    required_columns: [high, low, close]
+    params: {window: 14}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 15
+    requires_extra_data: false
+    description: +DI (14).
+  - id: minus_di_14
+    name: minus_di_14
+    category: trend
+    required_columns: [high, low, close]
+    params: {window: 14}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 15
+    requires_extra_data: false
+    description: -DI (14).
+  - id: trix_15
+    name: trix_15
+    category: trend
+    required_columns: [close]
+    params: {window: 15}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 16
+    requires_extra_data: false
+    description: TRIX (15).
+  - id: linreg_slope_20
+    name: linreg_slope_20
+    category: trend
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Linear regression slope (20).
+
+  - id: volatility_10
+    name: volatility_10
+    category: volatility
+    required_columns: [close]
+    params: {window: 10}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 11
+    requires_extra_data: false
+    description: Rolling return std (10).
+  - id: volatility_20
+    name: volatility_20
+    category: volatility
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Rolling return std (20).
+  - id: atr_14
+    name: atr_14
+    category: volatility
+    required_columns: [high, low, close]
+    params: {window: 14}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 15
+    requires_extra_data: false
+    description: ATR (14) normalized by close.
+  - id: true_range
+    name: true_range
+    category: volatility
+    required_columns: [high, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: True range normalized by close.
+  - id: vol_parkinson_20
+    name: vol_parkinson_20
+    category: volatility
+    required_columns: [high, low]
+    params: {window: 20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Parkinson volatility (20).
+  - id: vol_gk_20
+    name: vol_gk_20
+    category: volatility
+    required_columns: [open, high, low, close]
+    params: {window: 20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Garman-Klass volatility (20).
+  - id: vol_rs_20
+    name: vol_rs_20
+    category: volatility
+    required_columns: [open, high, low, close]
+    params: {window: 20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Rogers-Satchell volatility (20).
+  - id: bb_width_20
+    name: bb_width_20
+    category: volatility
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Bollinger band width (20).
+  - id: keltner_width_20
+    name: keltner_width_20
+    category: volatility
+    required_columns: [high, low, close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Keltner channel width (20).
+  - id: vol_zscore_20
+    name: vol_zscore_20
+    category: volatility
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Volatility z-score (20).
+
+  - id: volume
+    name: volume
+    category: volume
+    required_columns: [volume]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Log volume.
+  - id: log_volume
+    name: log_volume
+    category: volume
+    required_columns: [volume]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Log volume (alias).
+  - id: volume_change
+    name: volume_change
+    category: volume
+    required_columns: [volume]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Volume percent change.
+  - id: volume_zscore_20
+    name: volume_zscore_20
+    category: volume
+    required_columns: [volume]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Volume z-score (20).
+  - id: obv
+    name: obv
+    category: volume
+    required_columns: [volume, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: On-balance volume.
+  - id: vwap_20
+    name: vwap_20
+    category: volume
+    required_columns: [high, low, close, volume]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Rolling VWAP (20).
+  - id: mfi_14
+    name: mfi_14
+    category: volume
+    required_columns: [high, low, close, volume]
+    params: {window: 14}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 15
+    requires_extra_data: false
+    description: Money Flow Index (14).
+  - id: adl
+    name: adl
+    category: volume
+    required_columns: [high, low, close, volume]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Accumulation/Distribution line.
+  - id: cmf_20
+    name: cmf_20
+    category: volume
+    required_columns: [high, low, close, volume]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Chaikin Money Flow (20).
+  - id: volume_weighted_return_20
+    name: volume_weighted_return_20
+    category: volume
+    required_columns: [close, volume]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Volume-weighted return (20).
+  - id: amihud_20
+    name: amihud_20
+    category: volume
+    required_columns: [close, volume]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Amihud illiquidity proxy (20).
+
+  - id: bb_upper_20
+    name: bb_upper_20
+    category: bands
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Bollinger upper band (20).
+  - id: bb_lower_20
+    name: bb_lower_20
+    category: bands
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Bollinger lower band (20).
+  - id: bb_percent_b_20
+    name: bb_percent_b_20
+    category: bands
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Bollinger %B (20).
+  - id: donchian_high_20
+    name: donchian_high_20
+    category: bands
+    required_columns: [high]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Donchian high (20).
+  - id: donchian_low_20
+    name: donchian_low_20
+    category: bands
+    required_columns: [low]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Donchian low (20).
+  - id: donchian_width_20
+    name: donchian_width_20
+    category: bands
+    required_columns: [high, low]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Donchian width (20).
+  - id: donchian_pos_20
+    name: donchian_pos_20
+    category: bands
+    required_columns: [high, low, close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Donchian position (20).
+  - id: keltner_upper_20
+    name: keltner_upper_20
+    category: bands
+    required_columns: [high, low, close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Keltner upper (20).
+  - id: keltner_lower_20
+    name: keltner_lower_20
+    category: bands
+    required_columns: [high, low, close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Keltner lower (20).
+  - id: dist_to_support_20
+    name: dist_to_support_20
+    category: bands
+    required_columns: [low, close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Distance to rolling support (20).
+  - id: dist_to_resistance_20
+    name: dist_to_resistance_20
+    category: bands
+    required_columns: [high, close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Distance to rolling resistance (20).
+  - id: pivot_distance
+    name: pivot_distance
+    category: bands
+    required_columns: [high, low, close]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 2
+    requires_extra_data: false
+    description: Distance to previous pivot point.
+
+  - id: returns_skew_20
+    name: returns_skew_20
+    category: stats
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Rolling skewness of returns (20).
+  - id: returns_kurt_20
+    name: returns_kurt_20
+    category: stats
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Rolling kurtosis of returns (20).
+  - id: autocorr_1_20
+    name: autocorr_1_20
+    category: stats
+    required_columns: [close]
+    params: {window: 20, lag: 1}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Rolling autocorrelation (lag 1, window 20).
+  - id: entropy_20
+    name: entropy_20
+    category: stats
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: exp
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Rolling entropy proxy (20).
+  - id: abs_return_zscore_20
+    name: abs_return_zscore_20
+    category: stats
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Z-score of absolute returns (20).
+
+  - id: hour_sin
+    name: hour_sin
+    category: time
+    required_columns: [open_time_ms]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Hour-of-day sine.
+  - id: hour_cos
+    name: hour_cos
+    category: time
+    required_columns: [open_time_ms]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Hour-of-day cosine.
+  - id: dow_sin
+    name: dow_sin
+    category: time
+    required_columns: [open_time_ms]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Day-of-week sine.
+  - id: dow_cos
+    name: dow_cos
+    category: time
+    required_columns: [open_time_ms]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Day-of-week cosine.
+  - id: minute_sin
+    name: minute_sin
+    category: time
+    required_columns: [open_time_ms]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Minute-of-day sine.
+  - id: minute_cos
+    name: minute_cos
+    category: time
+    required_columns: [open_time_ms]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Minute-of-day cosine.
+  - id: is_weekend
+    name: is_weekend
+    category: time
+    required_columns: [open_time_ms]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Weekend flag.
+  - id: session_onehot
+    name: session_onehot
+    category: time
+    required_columns: [session_id]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: One-hot encoded session id.
+  - id: minutes_since_session_start
+    name: minutes_since_session_start
+    category: time
+    required_columns: [session_id]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Minutes since session start.
+  - id: minutes_to_session_end
+    name: minutes_to_session_end
+    category: time
+    required_columns: [session_id]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Minutes to session end.
+  - id: session_overlap_flag
+    name: session_overlap_flag
+    category: time
+    required_columns: [session_id]
+    params: {}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: false
+    description: Overlap flag in classic_tz split mode.
+
+  - id: vol_regime_20
+    name: vol_regime_20
+    category: regime
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Volatility regime proxy (0-1).
+  - id: trend_strength_20
+    name: trend_strength_20
+    category: regime
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Trend strength proxy from slope.
+  - id: mean_reversion_score
+    name: mean_reversion_score
+    category: regime
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Mean reversion score (negative z-score).
+  - id: range_bound_score
+    name: range_bound_score
+    category: regime
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Range-boundness proxy from BB width.
+
+  - id: mtf_15m_sma_20
+    name: mtf_15m_sma_20
+    category: mtf
+    required_columns: [open, high, low, close]
+    params: {tf: 15m, feature: sma_20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: true
+    min_history_bars: 21
+    requires_extra_data: false
+    description: SMA20 on 15m resample.
+  - id: mtf_1h_ema_20
+    name: mtf_1h_ema_20
+    category: mtf
+    required_columns: [open, high, low, close]
+    params: {tf: 1h, feature: ema_20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: true
+    min_history_bars: 21
+    requires_extra_data: false
+    description: EMA20 on 1h resample.
+  - id: mtf_1h_rsi_14
+    name: mtf_1h_rsi_14
+    category: mtf
+    required_columns: [open, high, low, close]
+    params: {tf: 1h, feature: rsi_14}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: true
+    min_history_bars: 15
+    requires_extra_data: false
+    description: RSI14 on 1h resample.
+  - id: mtf_1h_volatility_20
+    name: mtf_1h_volatility_20
+    category: mtf
+    required_columns: [open, high, low, close]
+    params: {tf: 1h, feature: volatility_20}
+    compute_cost: med
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: true
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Volatility20 on 1h resample.
+
+  - id: order_book_imbalance
+    name: order_book_imbalance
+    category: external
+    required_columns: []
+    params: {}
+    compute_cost: exp
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: true
+    description: Placeholder (requires order book data).
+  - id: funding_rate
+    name: funding_rate
+    category: external
+    required_columns: []
+    params: {}
+    compute_cost: exp
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: true
+    description: Placeholder (requires funding rate data).
+  - id: open_interest
+    name: open_interest
+    category: external
+    required_columns: []
+    params: {}
+    compute_cost: exp
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: true
+    description: Placeholder (requires open interest data).
+  - id: news_sentiment
+    name: news_sentiment
+    category: external
+    required_columns: []
+    params: {}
+    compute_cost: exp
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 1
+    requires_extra_data: true
+    description: Placeholder (requires sentiment data).

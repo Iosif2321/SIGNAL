@@ -17,8 +17,9 @@ def evaluate_supervised(
     X: np.ndarray,
     y: np.ndarray,
     batch_size: int = 128,
+    device: torch.device | None = None,
 ) -> Dict[str, object]:
-    device = require_cuda()
+    device = device or require_cuda()
     X_t = torch.from_numpy(X).float().to(device)
     y_t = torch.from_numpy(y).long().to(device)
     loader = DataLoader(TensorDataset(X_t, y_t), batch_size=batch_size)

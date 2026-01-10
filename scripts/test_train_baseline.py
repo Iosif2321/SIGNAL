@@ -22,11 +22,14 @@ from cryptomvp.data.labels import make_up_down_labels
 from cryptomvp.data.scaling import apply_standard_scaler, fit_standard_scaler
 from cryptomvp.data.windowing import make_windows
 from cryptomvp.decision.rule import batch_decide, hold_rate, scan_thresholds
+from cryptomvp.features.registry import resolve_feature_list
 from cryptomvp.models.down_model import DownModel
 from cryptomvp.models.up_model import UpModel
 from cryptomvp.train.eval_supervised import evaluate_supervised
 from cryptomvp.train.feature_importance import compute_feature_importance
 from cryptomvp.train.supervised import train_supervised
+from cryptomvp.utils.gpu import resolve_device
+from cryptomvp.sessions import SessionRouter, assign_session_features
 from cryptomvp.utils.io import reports_dir
 from cryptomvp.utils.logging import get_logger
 from cryptomvp.utils.run_dir import init_run_dir
@@ -66,6 +69,7 @@ def _save_decision_log(
     probs: np.ndarray,
     preds: np.ndarray,
     y_true: np.ndarray,
+    session_ids: np.ndarray | None = None,
 ) -> None:
     X_flat = X_window.reshape(len(X_window), -1)
     columns = _build_feature_columns(feature_cols, window_size)
@@ -78,6 +82,8 @@ def _save_decision_log(
     df["y_pred"] = preds.astype(int)
     df["y_true"] = y_true.astype(int)
     df["correct"] = (df["pred"] == df["true"]).astype(int)
+    if session_ids is not None:
+        df["session_id"] = session_ids
     df.to_parquet(out_path, index=False)
 
 
@@ -101,6 +107,7 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
     cfg = load_config(config_path)
     logger = get_logger("supervised")
     set_seed(cfg.seed)
+    device = resolve_device(cfg.device, cfg.allow_cpu_fallback)
 
     dataset_path = Path(cfg.dataset.output_path)
     if not dataset_path.exists():
@@ -108,10 +115,27 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
             f"Dataset not found at {dataset_path}. Run scripts/test_build_dataset.py first."
         )
     df = _load_dataset(dataset_path)
+    router = SessionRouter(
+        mode=cfg.session.mode if cfg.session else "fixed_utc_partitions",
+        overlap_policy=cfg.session.overlap_policy if cfg.session else "priority",
+        priority_order=cfg.session.priority_order if cfg.session else None,
+        sessions=None,
+    )
+    df = assign_session_features(df, router)
     start_ms = int(df["open_time_ms"].min())
     end_ms = int(df["open_time_ms"].max())
 
-    features = compute_features(df, cfg.features.list_of_features)
+    feature_sets_path = (
+        Path(cfg.features.feature_sets_path)
+        if cfg.features.feature_sets_path is not None
+        else None
+    )
+    feature_list = resolve_feature_list(
+        cfg.features.list_of_features,
+        cfg.features.feature_set_id,
+        feature_sets_path=feature_sets_path,
+    )
+    features = compute_features(df, feature_list)
     X, window_times, feature_cols = make_windows(features, cfg.features.window_size_K)
     y_up, y_down = make_up_down_labels(df, window_times)
 
@@ -141,6 +165,7 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
     Xv, yv = X_flat_scaled[train_end:val_end], y_up[train_end:val_end]
     Xte, yte = X_flat_scaled[val_end:], y_up_test
     times_te = window_times[val_end:]
+    session_ids_te = df.set_index("open_time_ms").loc[times_te, "session_id"].to_numpy()
     X_window_te = X[val_end:]
 
     # UP model
@@ -158,8 +183,9 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
         weight_decay=cfg.supervised.weight_decay,
         model_name="baseline_up",
         track_weights=True,
+        device=device,
     )
-    up_eval = evaluate_supervised(up_model, Xte, yte)
+    up_eval = evaluate_supervised(up_model, Xte, yte, device=device)
 
     up_report_dir = reports_dir("supervised_up")
     up_fig_dir = up_report_dir / "figures"
@@ -280,6 +306,7 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
         probs=up_eval["probs"][:, 1],
         preds=up_eval["preds"],
         y_true=yte,
+        session_ids=session_ids_te,
     )
     up_imp, up_imp_agg = compute_feature_importance(
         up_model, feature_cols, cfg.features.window_size_K
@@ -314,8 +341,9 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
         weight_decay=cfg.supervised.weight_decay,
         model_name="baseline_down",
         track_weights=True,
+        device=device,
     )
-    down_eval = evaluate_supervised(down_model, Xte, yte)
+    down_eval = evaluate_supervised(down_model, Xte, yte, device=device)
 
     down_report_dir = reports_dir("supervised_down")
     down_fig_dir = down_report_dir / "figures"
@@ -436,6 +464,7 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
         probs=down_eval["probs"][:, 1],
         preds=down_eval["preds"],
         y_true=yte,
+        session_ids=session_ids_te,
     )
     down_imp, down_imp_agg = compute_feature_importance(
         down_model, feature_cols, cfg.features.window_size_K
@@ -676,6 +705,7 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
             "use_best_from_scan": int(use_best),
         }
     )
+    decision_log["session_id"] = session_ids_te[:n_test]
     for idx, feature in enumerate(feature_cols):
         decision_log[f"{feature}_t0"] = X_window_te[:n_test, -1, idx]
     decision_log.to_parquet(rule_dir / "decision_log.parquet", index=False)

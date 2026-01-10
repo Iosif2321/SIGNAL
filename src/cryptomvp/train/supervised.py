@@ -45,9 +45,10 @@ def train_supervised(
     weight_decay: float,
     model_name: str,
     track_weights: bool = False,
+    device: torch.device | None = None,
 ) -> TrainHistory:
     """Train a supervised model on GPU-only."""
-    device = require_cuda()
+    device = device or require_cuda()
     logger = get_logger(f"train.{model_name}")
 
     X_train_t = torch.from_numpy(X_train).float().to(device)

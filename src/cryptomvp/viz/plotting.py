@@ -235,3 +235,25 @@ def plot_heatmap(
     fig.colorbar(im, ax=ax)
     save_figure(fig, out_base, formats)
     plt.close(fig)
+
+
+def plot_reliability_curve(
+    mean_prob: Sequence[float],
+    accuracy: Sequence[float],
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    out_base: Path,
+    formats: Iterable[str],
+    label: str = "reliability",
+) -> None:
+    apply_style()
+    fig, ax = plt.subplots()
+    ax.plot(mean_prob, accuracy, marker="o", label=label)
+    ax.plot([0, 1], [0, 1], linestyle="--", color="gray", label="perfect")
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.legend()
+    save_figure(fig, out_base, formats)
+    plt.close(fig)

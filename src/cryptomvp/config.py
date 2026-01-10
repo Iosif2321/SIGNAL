@@ -34,6 +34,8 @@ class ParityConfig:
 class FeaturesConfig:
     window_size_K: int
     list_of_features: List[str]
+    feature_set_id: Optional[str] = None
+    feature_sets_path: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,11 @@ class TunerRewardConfig:
     rl_down_hold_penalty: float
     improve_up_accuracy_weight: float
     improve_down_accuracy_weight: float
+    decision_min_session_accuracy_weight: float = 0.0
+    decision_min_session_precision_up_weight: float = 0.0
+    decision_min_session_precision_down_weight: float = 0.0
+    decision_max_session_hold_penalty: float = 0.0
+    decision_max_session_conflict_penalty: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -118,6 +125,14 @@ class TunerSearchConfig:
 
 
 @dataclass(frozen=True)
+class TunerFeatureSelectionConfig:
+    enabled: bool
+    top_n: int
+    corr_threshold: float
+    var_threshold: float
+
+
+@dataclass(frozen=True)
 class TunerConfig:
     episodes: int
     entropy_bonus: float
@@ -126,6 +141,7 @@ class TunerConfig:
     param_space: Dict[str, List[Any]]
     candidates: Optional[List[TunerCandidateConfig]]
     search: TunerSearchConfig
+    feature_selection: Optional[TunerFeatureSelectionConfig] = None
 
 
 @dataclass(frozen=True)
@@ -140,6 +156,24 @@ class AdaptationConfig:
     min_rl_down_accuracy: Optional[float]
     max_rl_up_hold_rate: Optional[float]
     max_rl_down_hold_rate: Optional[float]
+    max_drift_score: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class SessionOverrideConfig:
+    tz: Optional[str]
+    start: Optional[str]
+    end: Optional[str]
+    overrides: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SessionConfig:
+    mode: str
+    overlap_policy: str
+    priority_order: List[str]
+    strategy: str
+    sessions: Dict[str, SessionOverrideConfig]
 
 
 @dataclass(frozen=True)
@@ -148,6 +182,8 @@ class Config:
     category: str
     interval: str
     seed: int
+    device: str
+    allow_cpu_fallback: bool
     dataset: DatasetConfig
     parity: ParityConfig
     features: FeaturesConfig
@@ -157,6 +193,7 @@ class Config:
     viz: VizConfig
     tuner: Optional[TunerConfig]
     adaptation: Optional[AdaptationConfig]
+    session: Optional[SessionConfig]
 
 
 def _parse_date_to_ms(date_str: str) -> int:
@@ -180,6 +217,8 @@ def load_config(path: str | Path) -> Config:
     """Load YAML config and return validated Config."""
     path = Path(path)
     data: Dict[str, Any] = yaml.safe_load(path.read_text())
+    device = str(data.get("device", "auto"))
+    allow_cpu_fallback = bool(data.get("allow_cpu_fallback", False))
 
     dataset = data.get("dataset", {})
     start_ms = dataset.get("start_ms")
@@ -221,6 +260,8 @@ def load_config(path: str | Path) -> Config:
     features_cfg = FeaturesConfig(
         window_size_K=int(data["features"]["window_size_K"]),
         list_of_features=list(data["features"]["list_of_features"]),
+        feature_set_id=data["features"].get("feature_set_id"),
+        feature_sets_path=data["features"].get("feature_sets_path"),
     )
 
     supervised_cfg = SupervisedConfig(
@@ -297,6 +338,21 @@ def load_config(path: str | Path) -> Config:
             improve_down_accuracy_weight=float(
                 tuner["reward"].get("improve_down_accuracy_weight", 0.0)
             ),
+            decision_min_session_accuracy_weight=float(
+                tuner["reward"].get("decision_min_session_accuracy_weight", 0.0)
+            ),
+            decision_min_session_precision_up_weight=float(
+                tuner["reward"].get("decision_min_session_precision_up_weight", 0.0)
+            ),
+            decision_min_session_precision_down_weight=float(
+                tuner["reward"].get("decision_min_session_precision_down_weight", 0.0)
+            ),
+            decision_max_session_hold_penalty=float(
+                tuner["reward"].get("decision_max_session_hold_penalty", 0.0)
+            ),
+            decision_max_session_conflict_penalty=float(
+                tuner["reward"].get("decision_max_session_conflict_penalty", 0.0)
+            ),
         )
         candidates = None
         if "candidates" in tuner:
@@ -328,6 +384,15 @@ def load_config(path: str | Path) -> Config:
             neighbor_only=bool(search.get("neighbor_only", False)),
             always_mutate=bool(search.get("always_mutate", True)),
         )
+        feature_selection_cfg = None
+        if "feature_selection" in tuner:
+            feat = tuner.get("feature_selection", {}) or {}
+            feature_selection_cfg = TunerFeatureSelectionConfig(
+                enabled=bool(feat.get("enabled", False)),
+                top_n=int(feat.get("top_n", 10)),
+                corr_threshold=float(feat.get("corr_threshold", 0.98)),
+                var_threshold=float(feat.get("var_threshold", 1e-12)),
+            )
         tuner_cfg = TunerConfig(
             episodes=int(tuner["episodes"]),
             entropy_bonus=float(tuner.get("entropy_bonus", 0.0)),
@@ -336,6 +401,7 @@ def load_config(path: str | Path) -> Config:
             param_space=param_space,
             candidates=candidates,
             search=search_cfg,
+            feature_selection=feature_selection_cfg,
         )
 
     adaptation_cfg = None
@@ -352,6 +418,26 @@ def load_config(path: str | Path) -> Config:
             min_rl_down_accuracy=_maybe_float(adapt.get("min_rl_down_accuracy")),
             max_rl_up_hold_rate=_maybe_float(adapt.get("max_rl_up_hold_rate")),
             max_rl_down_hold_rate=_maybe_float(adapt.get("max_rl_down_hold_rate")),
+            max_drift_score=_maybe_float(adapt.get("max_drift_score")),
+        )
+
+    session_cfg = None
+    if "session" in data:
+        sess = data["session"] or {}
+        sessions: Dict[str, SessionOverrideConfig] = {}
+        for name, sdata in (sess.get("sessions", {}) or {}).items():
+            sessions[str(name)] = SessionOverrideConfig(
+                tz=sdata.get("tz"),
+                start=sdata.get("start"),
+                end=sdata.get("end"),
+                overrides=dict(sdata.get("overrides", {}) or {}),
+            )
+        session_cfg = SessionConfig(
+            mode=str(sess.get("mode", "fixed_utc_partitions")),
+            overlap_policy=str(sess.get("overlap_policy", "priority")),
+            priority_order=list(sess.get("priority_order", ["US", "EUROPE", "ASIA"])),
+            strategy=str(sess.get("strategy", "experts_per_session")),
+            sessions=sessions,
         )
 
     return Config(
@@ -359,6 +445,8 @@ def load_config(path: str | Path) -> Config:
         category=str(data["category"]),
         interval=str(data["interval"]),
         seed=int(data.get("seed", 42)),
+        device=device,
+        allow_cpu_fallback=allow_cpu_fallback,
         dataset=dataset_cfg,
         parity=parity_cfg,
         features=features_cfg,
@@ -368,6 +456,7 @@ def load_config(path: str | Path) -> Config:
         viz=viz_cfg,
         tuner=tuner_cfg,
         adaptation=adaptation_cfg,
+        session=session_cfg,
     )
 
 

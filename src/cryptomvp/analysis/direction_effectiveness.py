@@ -21,6 +21,7 @@ from cryptomvp.config import Config, load_config
 from cryptomvp.data.features import compute_features
 from cryptomvp.data.labels import make_up_down_labels
 from cryptomvp.data.windowing import make_windows
+from cryptomvp.features.registry import resolve_feature_list
 from cryptomvp.utils.logging import get_logger
 from cryptomvp.viz.plotting import (
     plot_confusion_matrix,
@@ -132,7 +133,17 @@ def load_rl_labels(cfg: Config, run_dir: Path) -> Tuple[Optional[np.ndarray], Op
         df = pd.read_parquet(dataset_path)
     else:
         df = pd.read_csv(dataset_path)
-    features = compute_features(df, cfg.features.list_of_features)
+    feature_sets_path = (
+        Path(cfg.features.feature_sets_path)
+        if cfg.features.feature_sets_path is not None
+        else None
+    )
+    feature_list = resolve_feature_list(
+        cfg.features.list_of_features,
+        cfg.features.feature_set_id,
+        feature_sets_path=feature_sets_path,
+    )
+    features = compute_features(df, feature_list)
     _, window_times, _ = make_windows(features, cfg.features.window_size_K)
     y_up, y_down = make_up_down_labels(df, window_times)
     return y_up, y_down

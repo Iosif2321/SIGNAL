@@ -37,3 +37,10 @@ def reports_dir(test_name: Optional[str] = None) -> Path:
 
 def checkpoints_dir() -> Path:
     return ensure_dir(run_root() / "checkpoints")
+
+
+def sessions_dir(session_id: Optional[str] = None) -> Path:
+    base = ensure_dir(run_root() / "sessions")
+    if session_id:
+        return ensure_dir(base / session_id)
+    return base

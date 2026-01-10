@@ -2,6 +2,8 @@ symbol: BTCUSDT
 category: spot
 interval: 5
 seed: 42
+device: auto
+allow_cpu_fallback: true
 
 dataset:
   start_date: "2023-01-01"
@@ -18,6 +20,8 @@ parity:
 
 features:
   window_size_K: 32
+  feature_set_id: null
+  feature_sets_path: "features/feature_sets.yaml"
   list_of_features:
     - returns
     - log_returns
@@ -84,12 +88,22 @@ tuner:
     decision_action_rate_weight: 0.5
     decision_conflict_penalty: 0.7
     decision_hold_penalty: 0.7
+    decision_min_session_accuracy_weight: 0.4
+    decision_min_session_precision_up_weight: 0.2
+    decision_min_session_precision_down_weight: 0.2
+    decision_max_session_hold_penalty: 0.3
+    decision_max_session_conflict_penalty: 0.3
     rl_up_accuracy_weight: 0.2
     rl_down_accuracy_weight: 0.4
     rl_up_hold_penalty: 0.1
     rl_down_hold_penalty: 0.2
     improve_up_accuracy_weight: 0.4
     improve_down_accuracy_weight: 0.4
+  feature_selection:
+    enabled: true
+    top_n: 6
+    corr_threshold: 0.98
+    var_threshold: 1e-12
   search:
     explore_prob: 0.1
     mutate_prob: 0.5
@@ -97,11 +111,14 @@ tuner:
     neighbor_only: false
     always_mutate: true
   param_space:
-    features.list_of_features:
-      - [returns, log_returns, volatility, range, volume, rsi_14, ema_diff]
-      - [returns, log_returns, sma_5, sma_20, ema_12, ema_26, ema_diff, momentum_10, roc_5]
-      - [returns, log_returns, volatility, volatility_20, range, atr_14, volume_zscore_20]
-      - [returns, log_returns, volatility, volatility_20, range, body, upper_wick, lower_wick, volume, volume_change, volume_zscore_20, sma_5, sma_20, ema_12, ema_26, ema_diff, rsi_14, roc_5, momentum_10, atr_14]
+    features.feature_set_id:
+      - CORE_MINIMAL
+      - CORE_TREND
+      - CORE_VOL
+      - CORE_VOLUME
+      - CORE_ALL
+      - MTF_LIGHT
+      - SESSION_FRIENDLY
     features.window_size_K: [16, 32]
     supervised.epochs: [50]
     supervised.batch_size: [64]
@@ -137,3 +154,23 @@ adaptation:
   min_rl_down_accuracy: 0.47
   max_rl_up_hold_rate: 0.6
   max_rl_down_hold_rate: 0.6
+  max_drift_score: 0.2
+
+session:
+  mode: fixed_utc_partitions
+  overlap_policy: priority
+  priority_order: [US, EUROPE, ASIA]
+  strategy: experts_per_session
+  sessions:
+    ASIA:
+      start: "00:00"
+      end: "08:00"
+      overrides: {}
+    EUROPE:
+      start: "08:00"
+      end: "16:00"
+      overrides: {}
+    US:
+      start: "16:00"
+      end: "24:00"
+      overrides: {}

@@ -52,9 +52,10 @@ def train_reinforce(
     track_steps: bool = False,
     times: np.ndarray | None = None,
     model_name: str = "policy",
+    device: torch.device | None = None,
 ) -> Tuple[PolicyNet, RLHistory]:
     """Train a policy network with REINFORCE on GPU-only."""
-    device = require_cuda()
+    device = device or require_cuda()
     logger = get_logger(f"rl.{model_name}")
 
     X = X.astype(np.float32)

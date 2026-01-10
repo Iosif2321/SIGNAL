@@ -19,8 +19,11 @@ from cryptomvp.data.features import compute_features
 from cryptomvp.data.labels import make_directional_labels, make_up_down_labels
 from cryptomvp.data.scaling import apply_standard_scaler, fit_standard_scaler
 from cryptomvp.data.windowing import make_windows
+from cryptomvp.features.registry import resolve_feature_list
 from cryptomvp.train.rl_env import RewardConfig
 from cryptomvp.train.rl_train import train_reinforce
+from cryptomvp.utils.gpu import resolve_device
+from cryptomvp.sessions import SessionRouter, assign_session_features
 from cryptomvp.utils.logging import get_logger
 from cryptomvp.utils.io import reports_dir
 from cryptomvp.utils.run_dir import init_run_dir
@@ -39,6 +42,7 @@ def run_reward_weights(config_path: str, fast: bool, run_dir: Path | None = None
     cfg = load_config(config_path)
     logger = get_logger("reward_weights")
     set_seed(cfg.seed)
+    device = resolve_device(cfg.device, cfg.allow_cpu_fallback)
 
     dataset_path = Path(cfg.dataset.output_path)
     if not dataset_path.exists():
@@ -46,10 +50,27 @@ def run_reward_weights(config_path: str, fast: bool, run_dir: Path | None = None
             f"Dataset not found at {dataset_path}. Run scripts/test_build_dataset.py first."
         )
     df = _load_dataset(dataset_path)
+    router = SessionRouter(
+        mode=cfg.session.mode if cfg.session else "fixed_utc_partitions",
+        overlap_policy=cfg.session.overlap_policy if cfg.session else "priority",
+        priority_order=cfg.session.priority_order if cfg.session else None,
+        sessions=None,
+    )
+    df = assign_session_features(df, router)
     start_ms = int(df["open_time_ms"].min())
     end_ms = int(df["open_time_ms"].max())
 
-    features = compute_features(df, cfg.features.list_of_features)
+    feature_sets_path = (
+        Path(cfg.features.feature_sets_path)
+        if cfg.features.feature_sets_path is not None
+        else None
+    )
+    feature_list = resolve_feature_list(
+        cfg.features.list_of_features,
+        cfg.features.feature_set_id,
+        feature_sets_path=feature_sets_path,
+    )
+    features = compute_features(df, feature_list)
     X, window_times, feature_cols = make_windows(features, cfg.features.window_size_K)
     y_up, y_down = make_up_down_labels(df, window_times)
     y_up_dir, _ = make_directional_labels(df, window_times)
@@ -93,6 +114,7 @@ def run_reward_weights(config_path: str, fast: bool, run_dir: Path | None = None
             seed=7,
             track_diagnostics=True,
             model_name=f"reward_hold_{rh}",
+            device=device,
         )
         histories.append(hist)
         labels.append(f"R_hold={rh}")

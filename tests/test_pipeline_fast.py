@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from cryptomvp.config import load_config
 from cryptomvp.utils.gpu import CudaUnavailableError
 
 from scripts.test_data_parity import run_parity
@@ -22,7 +23,9 @@ def test_pipeline_fast():
     assert (run_dir / "reports" / "parity" / "summary.md").exists()
     assert (run_dir / "reports" / "dataset" / "summary.md").exists()
 
-    if torch.cuda.is_available():
+    cfg = load_config(config)
+    allow_cpu = cfg.allow_cpu_fallback and cfg.device != "cuda"
+    if torch.cuda.is_available() or allow_cpu or cfg.device == "cpu":
         run_supervised(config, fast=True, run_dir=run_dir)
         run_rl(config, fast=True, run_dir=run_dir)
         run_reward_weights(config, fast=True, run_dir=run_dir)

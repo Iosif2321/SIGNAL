@@ -86,6 +86,7 @@ def init_run_dir(run_dir: Optional[str | Path], config_path: Optional[str | Path
     ensure_dir(run_path / "data" / "processed")
     ensure_dir(run_path / "reports")
     ensure_dir(run_path / "checkpoints")
+    ensure_dir(run_path / "sessions")
 
     os.environ["CRYPTOMVP_RUN_DIR"] = str(run_path)
 

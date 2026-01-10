@@ -21,6 +21,8 @@ if str(SRC) not in sys.path:
 
 from cryptomvp.analysis.adaptation import assess_adaptation  # noqa: E402
 from cryptomvp.config import load_config  # noqa: E402
+from cryptomvp.features.registry import default_feature_sets_path, load_feature_sets  # noqa: E402
+from cryptomvp.features.selection import staged_feature_selection  # noqa: E402
 from cryptomvp.utils.io import reports_dir, run_root  # noqa: E402
 from cryptomvp.utils.logging import get_logger  # noqa: E402
 from cryptomvp.utils.run_dir import init_run_dir  # noqa: E402
@@ -66,6 +68,54 @@ def _load_decision_metrics(decision_log_path: Path) -> Dict[str, float]:
         "decision_precision_up": precision_up,
         "decision_precision_down": precision_down,
     }
+    if "session_id" in df.columns:
+        session_metrics = []
+        for session_id, sdf in df.groupby("session_id"):
+            s_decisions = sdf["decision"].astype(str)
+            s_hold = s_decisions == "HOLD"
+            s_action = ~s_hold
+            s_hold_rate = float(s_hold.mean())
+            s_action_rate = float(s_action.mean())
+            if s_action.any():
+                s_action_acc = float(sdf.loc[s_action, "correct_direction"].mean())
+            else:
+                s_action_acc = 0.0
+            s_conflict = float(sdf["conflict"].mean()) if "conflict" in sdf.columns else 0.0
+            s_precision_up = 0.0
+            s_precision_down = 0.0
+            if "true_direction" in sdf.columns:
+                s_true = sdf["true_direction"].astype(str)
+                if (s_decisions == "UP").any():
+                    s_precision_up = float((s_true[s_decisions == "UP"] == "UP").mean())
+                if (s_decisions == "DOWN").any():
+                    s_precision_down = float((s_true[s_decisions == "DOWN"] == "DOWN").mean())
+            session_metrics.append(
+                {
+                    "session_id": session_id,
+                    "action_accuracy": s_action_acc,
+                    "precision_up": s_precision_up,
+                    "precision_down": s_precision_down,
+                    "hold_rate": s_hold_rate,
+                    "conflict_rate": s_conflict,
+                    "action_rate": s_action_rate,
+                }
+            )
+        if session_metrics:
+            metrics["decision_min_session_accuracy"] = min(
+                m["action_accuracy"] for m in session_metrics
+            )
+            metrics["decision_min_session_precision_up"] = min(
+                m["precision_up"] for m in session_metrics
+            )
+            metrics["decision_min_session_precision_down"] = min(
+                m["precision_down"] for m in session_metrics
+            )
+            metrics["decision_max_session_hold_rate"] = max(
+                m["hold_rate"] for m in session_metrics
+            )
+            metrics["decision_max_session_conflict_rate"] = max(
+                m["conflict_rate"] for m in session_metrics
+            )
     metrics.update(
         {
             "hold_rate": hold_rate,
@@ -225,6 +275,37 @@ def run_rl_tuner(
     fig_dir = report_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
+    if cfg.tuner.feature_selection is not None and cfg.tuner.feature_selection.enabled:
+        df = pd.read_parquet(dataset_path) if dataset_path.suffix == ".parquet" else pd.read_csv(dataset_path)
+        feature_sets_path = (
+            Path(cfg.features.feature_sets_path)
+            if cfg.features.feature_sets_path is not None
+            else default_feature_sets_path()
+        )
+        scores = staged_feature_selection(
+            df,
+            window_size=cfg.features.window_size_K,
+            feature_sets_path=feature_sets_path,
+            top_n=cfg.tuner.feature_selection.top_n,
+            corr_threshold=cfg.tuner.feature_selection.corr_threshold,
+            var_threshold=cfg.tuner.feature_selection.var_threshold,
+        )
+        top_sets = [score.feature_set_id for score in scores]
+        param_space.pop("features.list_of_features", None)
+        param_space["features.feature_set_id"] = top_sets
+
+        fs_rows = [
+            {
+                "feature_set_id": score.feature_set_id,
+                "score": score.score,
+                "accuracy": score.accuracy,
+                "roc_auc": score.roc_auc,
+                "n_features": score.n_features,
+            }
+            for score in scores
+        ]
+        pd.DataFrame(fs_rows).to_csv(report_dir / "feature_selection.csv", index=False)
+
     param_space_path = report_dir / "param_space.json"
     param_space_path.write_text(json.dumps(param_space, indent=2), encoding="utf-8")
 
@@ -282,6 +363,16 @@ def run_rl_tuner(
             + cfg.tuner.reward.decision_action_rate_weight * metrics["decision_action_rate"]
             - cfg.tuner.reward.decision_conflict_penalty * metrics["decision_conflict_rate"]
             - cfg.tuner.reward.decision_hold_penalty * metrics["decision_hold_rate"]
+            + cfg.tuner.reward.decision_min_session_accuracy_weight
+            * metrics.get("decision_min_session_accuracy", 0.0)
+            + cfg.tuner.reward.decision_min_session_precision_up_weight
+            * metrics.get("decision_min_session_precision_up", 0.0)
+            + cfg.tuner.reward.decision_min_session_precision_down_weight
+            * metrics.get("decision_min_session_precision_down", 0.0)
+            - cfg.tuner.reward.decision_max_session_hold_penalty
+            * metrics.get("decision_max_session_hold_rate", 0.0)
+            - cfg.tuner.reward.decision_max_session_conflict_penalty
+            * metrics.get("decision_max_session_conflict_rate", 0.0)
             + cfg.tuner.reward.rl_up_accuracy_weight * metrics["rl_up_accuracy"]
             + cfg.tuner.reward.rl_down_accuracy_weight * metrics["rl_down_accuracy"]
             - cfg.tuner.reward.rl_up_hold_penalty * metrics["rl_up_hold_rate"]
@@ -380,6 +471,8 @@ def run_rl_tuner(
 
     history_df = pd.DataFrame(results)
     history_df.to_csv(report_dir / "episode_metrics.csv", index=False)
+    leaderboard = history_df.sort_values("reward", ascending=False).head(20)
+    leaderboard.to_csv(report_dir / "leaderboard.csv", index=False)
     if best_params is None:
         best_params = {}
     if best_state is None:

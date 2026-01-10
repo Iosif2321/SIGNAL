@@ -41,9 +41,10 @@ def tune_candidates(
     entropy_bonus: float,
     seed: int = 7,
     lr: float = 0.1,
+    device: torch.device | None = None,
 ) -> Tuple[List[TunerEpisode], torch.Tensor]:
     """Run a REINFORCE-style bandit tuner over candidate configs."""
-    device = require_cuda()
+    device = device or require_cuda()
     logger = get_logger("rl_tuner")
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -103,9 +104,10 @@ def tune_param_space(
     entropy_bonus: float,
     seed: int = 7,
     lr: float = 0.1,
+    device: torch.device | None = None,
 ) -> Tuple[List[ParamTunerEpisode], Dict[str, torch.Tensor]]:
     """Run a factorized REINFORCE tuner over parameter space."""
-    device = require_cuda()
+    device = device or require_cuda()
     logger = get_logger("rl_tuner")
     torch.manual_seed(seed)
     np.random.seed(seed)
