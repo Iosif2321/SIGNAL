@@ -16,6 +16,15 @@ class DriftScore:
     feature: str
     psi: float
     kl: float
+    ks: float
+
+
+@dataclass(frozen=True)
+class RollingDriftScore:
+    open_time_ms: int
+    feature: str
+    psi: float
+    ks: float
 
 
 def _hist_counts(values: np.ndarray, bins: int) -> np.ndarray:
@@ -36,6 +45,17 @@ def compute_kl(ref: np.ndarray, cur: np.ndarray, bins: int = 10) -> float:
     ref_counts = _hist_counts(ref, bins)
     cur_counts = _hist_counts(cur, bins)
     return float(np.sum(ref_counts * np.log((ref_counts + 1e-9) / (cur_counts + 1e-9))))
+
+
+def compute_ks(ref: np.ndarray, cur: np.ndarray) -> float:
+    if len(ref) == 0 or len(cur) == 0:
+        return 0.0
+    ref_sorted = np.sort(ref.astype(float))
+    cur_sorted = np.sort(cur.astype(float))
+    combined = np.concatenate([ref_sorted, cur_sorted])
+    cdf_ref = np.searchsorted(ref_sorted, combined, side="right") / len(ref_sorted)
+    cdf_cur = np.searchsorted(cur_sorted, combined, side="right") / len(cur_sorted)
+    return float(np.max(np.abs(cdf_ref - cdf_cur)))
 
 
 def drift_report(
@@ -60,8 +80,44 @@ def drift_report(
                 feature=col,
                 psi=compute_psi(ref_vals, cur_vals, bins=bins),
                 kl=compute_kl(ref_vals, cur_vals, bins=bins),
+                ks=compute_ks(ref_vals, cur_vals),
             )
         )
+    return scores
+
+
+def rolling_drift_report(
+    df: pd.DataFrame,
+    feature_list: Iterable[str],
+    window: int,
+    bins: int = 10,
+) -> List[RollingDriftScore]:
+    features = compute_features(df, list(feature_list))
+    cols = [c for c in features.columns if c != "open_time_ms"]
+    if len(features) < window:
+        return []
+    ref_window = features.iloc[:window]
+    scores: List[RollingDriftScore] = []
+    for end_idx in range(window, len(features) + 1):
+        cur_window = features.iloc[end_idx - window : end_idx]
+        if cur_window.empty:
+            continue
+        open_time_ms = int(cur_window["open_time_ms"].iloc[-1])
+        for col in cols:
+            if col not in cur_window.columns:
+                continue
+            ref_vals = ref_window[col].to_numpy(dtype=float)
+            cur_vals = cur_window[col].to_numpy(dtype=float)
+            if len(ref_vals) == 0 or len(cur_vals) == 0:
+                continue
+            scores.append(
+                RollingDriftScore(
+                    open_time_ms=open_time_ms,
+                    feature=col,
+                    psi=compute_psi(ref_vals, cur_vals, bins=bins),
+                    ks=compute_ks(ref_vals, cur_vals),
+                )
+            )
     return scores
 
 

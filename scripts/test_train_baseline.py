@@ -651,6 +651,7 @@ def run_supervised(config_path: str, fast: bool, run_dir: Path | None = None) ->
             "conflict_rate": conflict_rate,
             "precision_up": precision_up,
             "precision_down": precision_down,
+            "drift_score": 0.0,
         }
         good, failures = assess_adaptation(adapt_metrics, cfg.adaptation)
         adaptation_status = "GOOD_ENOUGH" if good else "NEEDS_ADAPTATION"
