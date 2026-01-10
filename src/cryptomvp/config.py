@@ -204,6 +204,7 @@ class Config:
     viz: VizConfig
     tuner: Optional[TunerConfig]
     adaptation: Optional[AdaptationConfig]
+    adaptation_presets: Optional[Dict[str, AdaptationConfig]]
     session: Optional[SessionConfig]
 
 
@@ -222,6 +223,22 @@ def _maybe_float(value: Any) -> Optional[float]:
     if value is None:
         return None
     return float(value)
+
+
+def _parse_adaptation_config(adapt: Dict[str, Any]) -> AdaptationConfig:
+    return AdaptationConfig(
+        min_action_accuracy=_maybe_float(adapt.get("min_action_accuracy")),
+        min_action_rate=_maybe_float(adapt.get("min_action_rate")),
+        max_hold_rate=_maybe_float(adapt.get("max_hold_rate")),
+        max_conflict_rate=_maybe_float(adapt.get("max_conflict_rate")),
+        min_precision_up=_maybe_float(adapt.get("min_precision_up")),
+        min_precision_down=_maybe_float(adapt.get("min_precision_down")),
+        min_rl_up_accuracy=_maybe_float(adapt.get("min_rl_up_accuracy")),
+        min_rl_down_accuracy=_maybe_float(adapt.get("min_rl_down_accuracy")),
+        max_rl_up_hold_rate=_maybe_float(adapt.get("max_rl_up_hold_rate")),
+        max_rl_down_hold_rate=_maybe_float(adapt.get("max_rl_down_hold_rate")),
+        max_drift_score=_maybe_float(adapt.get("max_drift_score")),
+    )
 
 
 def load_config(path: str | Path) -> Config:
@@ -438,20 +455,14 @@ def load_config(path: str | Path) -> Config:
 
     adaptation_cfg = None
     if "adaptation" in data:
-        adapt = data["adaptation"]
-        adaptation_cfg = AdaptationConfig(
-            min_action_accuracy=_maybe_float(adapt.get("min_action_accuracy")),
-            min_action_rate=_maybe_float(adapt.get("min_action_rate")),
-            max_hold_rate=_maybe_float(adapt.get("max_hold_rate")),
-            max_conflict_rate=_maybe_float(adapt.get("max_conflict_rate")),
-            min_precision_up=_maybe_float(adapt.get("min_precision_up")),
-            min_precision_down=_maybe_float(adapt.get("min_precision_down")),
-            min_rl_up_accuracy=_maybe_float(adapt.get("min_rl_up_accuracy")),
-            min_rl_down_accuracy=_maybe_float(adapt.get("min_rl_down_accuracy")),
-            max_rl_up_hold_rate=_maybe_float(adapt.get("max_rl_up_hold_rate")),
-            max_rl_down_hold_rate=_maybe_float(adapt.get("max_rl_down_hold_rate")),
-            max_drift_score=_maybe_float(adapt.get("max_drift_score")),
-        )
+        adaptation_cfg = _parse_adaptation_config(data["adaptation"])
+
+    adaptation_presets_cfg = None
+    if "adaptation_presets" in data:
+        adaptation_presets_cfg = {
+            str(name): _parse_adaptation_config(preset)
+            for name, preset in data["adaptation_presets"].items()
+        }
 
     session_cfg = None
     if "session" in data:
@@ -488,6 +499,7 @@ def load_config(path: str | Path) -> Config:
         viz=viz_cfg,
         tuner=tuner_cfg,
         adaptation=adaptation_cfg,
+        adaptation_presets=adaptation_presets_cfg,
         session=session_cfg,
     )
 

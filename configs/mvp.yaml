@@ -156,17 +156,31 @@ tuner:
     rl.policy_hidden_dim: [64, 128]
 
 adaptation:
-  min_action_accuracy: 0.53
+  min_action_accuracy: 0.51
   min_action_rate: 0.4
   max_hold_rate: 0.35
   max_conflict_rate: 0.15
-  min_precision_up: 0.53
-  min_precision_down: 0.51
-  min_rl_up_accuracy: 0.52
+  min_precision_up: 0.51
+  min_precision_down: 0.49
+  min_rl_up_accuracy: 0.5
   min_rl_down_accuracy: 0.47
   max_rl_up_hold_rate: 0.6
   max_rl_down_hold_rate: 0.6
   max_drift_score: 0.2
+
+adaptation_presets:
+  strict:
+    min_action_accuracy: 0.55
+    min_action_rate: 0.45
+    max_hold_rate: 0.3
+    max_conflict_rate: 0.1
+    min_precision_up: 0.55
+    min_precision_down: 0.53
+    min_rl_up_accuracy: 0.54
+    min_rl_down_accuracy: 0.5
+    max_rl_up_hold_rate: 0.5
+    max_rl_down_hold_rate: 0.5
+    max_drift_score: 0.15
 
 session:
   mode: fixed_utc_partitions
