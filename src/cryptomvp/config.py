@@ -153,6 +153,8 @@ class TunerConfig:
     agent_train_episodes: int = 5
     agent_steps_per_episode: int = 200
     online_split_ratio: float = 0.0
+    rolling_split: bool = False
+    window_stride: int = 1
 
 
 @dataclass(frozen=True)
@@ -434,6 +436,8 @@ def load_config(path: str | Path) -> Config:
             agent_train_episodes=int(tuner.get("agent_train_episodes", 5)),
             agent_steps_per_episode=int(tuner.get("agent_steps_per_episode", data["rl"]["steps_per_episode"])),
             online_split_ratio=float(tuner.get("online_split_ratio", 0.0)),
+            rolling_split=bool(tuner.get("rolling_split", False)),
+            window_stride=int(tuner.get("window_stride", 1)),
         )
 
     adaptation_cfg = None
