@@ -105,9 +105,9 @@ class SessionRouter:
                     raise RuntimeError(
                         f"Timezone {definition.tz} not found; install tzdata."
                     ) from exc
-                local_time = local_ts.timetz()
+                local_time = local_ts.time()
             else:
-                local_time = ts.timetz()
+                local_time = ts.time()
 
             if _in_window(local_time, start_t, end_t):
                 matches.append(name)

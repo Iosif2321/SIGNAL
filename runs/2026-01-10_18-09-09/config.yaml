@@ -83,9 +83,11 @@ viz:
 tuner:
   mode: agent
   episodes: 50
-  agent_train_episodes: 15
+  agent_train_episodes: 5
   agent_steps_per_episode: 200
-  agent_reset_to_best: true
+  online_split_ratio: 0.15
+  rolling_split: false
+  window_stride: 50
   entropy_bonus: 0.01
   lr: 0.1
   reward:
