@@ -239,6 +239,20 @@ def _time_split_with_online(n: int, online_ratio: float) -> Tuple[int, int, int]
     return train_end, val_end, online_start
 
 
+def _window_split_indices(
+    train_size: int,
+    val_size: int,
+    online_start: int,
+    window_start: int,
+) -> Tuple[int, int, int, int]:
+    max_start = max(0, online_start - (train_size + val_size))
+    start = min(max(window_start, 0), max_start)
+    train_start = start
+    train_end = train_start + train_size
+    val_end = train_end + val_size
+    return train_start, train_end, val_end, max_start
+
+
 def _load_feature_scaler(scaler_path: Path, feature_cols: List[str]) -> Tuple[np.ndarray, np.ndarray]:
     if not scaler_path.exists():
         raise RuntimeError(f"Missing RL feature scaler at {scaler_path}.")
@@ -360,22 +374,32 @@ def _prepare_rl_arrays(cfg: Any, dataset_path: Path) -> Dict[str, Any]:
     )
     if val_end <= train_end or online_start <= val_end:
         raise RuntimeError("Not enough samples for RL tuner split.")
+    train_size = train_end
+    val_size = val_end - train_end
+    rolling_split = bool(getattr(cfg.tuner, "rolling_split", False))
+    window_stride = int(getattr(cfg.tuner, "window_stride", 1))
+    if window_stride < 1:
+        raise ValueError("tuner.window_stride must be >= 1.")
+    max_window_start = max(0, online_start - (train_size + val_size))
     anchor_end = 0
     if len(X_scaled) > 0:
         anchor_end = max(1, int(len(X_scaled) * 0.1))
     return {
-        "X_train": X_scaled[:train_end],
-        "X_val": X_scaled[train_end:val_end],
+        "X_full": X_scaled,
         "X_online": X_scaled[online_start:],
         "X_anchor": X_scaled[:anchor_end],
-        "y_up_train": y_up_dir[:train_end],
-        "y_up_val": y_up_dir[train_end:val_end],
+        "y_up_full": y_up_dir,
         "y_up_online": y_up_dir[online_start:],
         "y_up_anchor": y_up_dir[:anchor_end],
-        "y_down_train": y_down_dir[:train_end],
-        "y_down_val": y_down_dir[train_end:val_end],
+        "y_down_full": y_down_dir,
         "y_down_online": y_down_dir[online_start:],
         "y_down_anchor": y_down_dir[:anchor_end],
+        "train_size": train_size,
+        "val_size": val_size,
+        "online_start": online_start,
+        "rolling_split": rolling_split,
+        "window_stride": window_stride,
+        "max_window_start": max_window_start,
     }
 
 
@@ -474,18 +498,21 @@ def run_rl_tuner_agent(
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     arrays = _prepare_rl_arrays(cfg, dataset_path)
-    X_train = arrays["X_train"]
-    X_val = arrays["X_val"]
+    X_full = arrays["X_full"]
     X_online = arrays["X_online"]
     X_anchor = arrays["X_anchor"]
-    y_up_train = arrays["y_up_train"]
-    y_up_val = arrays["y_up_val"]
+    y_up_full = arrays["y_up_full"]
     y_up_online = arrays["y_up_online"]
     y_up_anchor = arrays["y_up_anchor"]
-    y_down_train = arrays["y_down_train"]
-    y_down_val = arrays["y_down_val"]
+    y_down_full = arrays["y_down_full"]
     y_down_online = arrays["y_down_online"]
     y_down_anchor = arrays["y_down_anchor"]
+    train_size = arrays["train_size"]
+    val_size = arrays["val_size"]
+    online_start = arrays["online_start"]
+    rolling_split = arrays["rolling_split"]
+    window_stride = arrays["window_stride"]
+    max_window_start = arrays["max_window_start"]
 
     reward_cfg = RewardConfig(
         R_correct=cfg.rl.reward.R_correct,
@@ -537,6 +564,19 @@ def run_rl_tuner_agent(
         return float(np.var(values))
 
     for ep in range(1, episodes + 1):
+        if rolling_split and max_window_start > 0:
+            window_start = int(((ep - 1) * window_stride) % (max_window_start + 1))
+        else:
+            window_start = 0
+        train_start, train_end, val_end, _ = _window_split_indices(
+            train_size, val_size, online_start, window_start
+        )
+        X_train = X_full[train_start:train_end]
+        X_val = X_full[train_end:val_end]
+        y_up_train = y_up_full[train_start:train_end]
+        y_up_val = y_up_full[train_end:val_end]
+        y_down_train = y_down_full[train_start:train_end]
+        y_down_val = y_down_full[train_end:val_end]
         up_policy, up_hist = train_reinforce(
             X_train,
             y_up_train,
@@ -756,6 +796,12 @@ def run_rl_tuner_agent(
         results.append(
             {
                 "episode": ep,
+                "train_start": int(train_start),
+                "train_end": int(train_end),
+                "val_end": int(val_end),
+                "online_start": int(online_start),
+                "window_stride": int(window_stride),
+                "rolling_split": int(rolling_split),
                 "reward": reward_total,
                 "best_reward": best_reward,
                 "adaptation_good": adaptation_good if adaptation_good is not None else -1,
@@ -875,6 +921,51 @@ def run_rl_tuner_agent(
         ),
         encoding="utf-8",
     )
+    window_summary_cols = [
+        "episode",
+        "train_start",
+        "train_end",
+        "val_end",
+        "reward",
+        "decision_action_accuracy_non_hold",
+        "decision_hold_rate",
+        "rl_up_accuracy",
+        "rl_down_accuracy",
+        "online_rl_up_accuracy",
+        "online_rl_down_accuracy",
+        "anchor_avg_accuracy",
+    ]
+    window_summary_cols = [col for col in window_summary_cols if col in history_df.columns]
+    window_summary_df = history_df[window_summary_cols].copy()
+    window_summary_rows: List[str] = []
+    if not window_summary_df.empty:
+        header = "| " + " | ".join(window_summary_cols) + " |"
+        divider = "| " + " | ".join(["---"] * len(window_summary_cols)) + " |"
+        window_summary_rows.extend([header, divider])
+        for _, row in window_summary_df.iterrows():
+            formatted = []
+            for col in window_summary_cols:
+                value = row[col]
+                if isinstance(value, float):
+                    formatted.append(f"{value:.4f}")
+                else:
+                    formatted.append(str(int(value)) if isinstance(value, (int, np.integer)) else str(value))
+            window_summary_rows.append("| " + " | ".join(formatted) + " |")
+    mean_metrics = {}
+    numeric_cols = [
+        "reward",
+        "decision_action_accuracy_non_hold",
+        "decision_hold_rate",
+        "rl_up_accuracy",
+        "rl_down_accuracy",
+        "online_rl_up_accuracy",
+        "online_rl_down_accuracy",
+        "anchor_avg_accuracy",
+    ]
+    for col in numeric_cols:
+        if col in history_df.columns:
+            mean_metrics[col] = float(history_df[col].mean())
+    mean_lines = [f"- mean {key}: {value:.4f}" for key, value in mean_metrics.items()]
     summary_lines = [
         "# RL Tuner Summary (Agent Mode)",
         f"Symbol: {cfg.symbol}",
@@ -882,6 +973,8 @@ def run_rl_tuner_agent(
         f"Seed: {cfg.seed}",
         f"Episodes: {episodes}",
         f"Online split ratio: {cfg.tuner.online_split_ratio}",
+        f"Rolling split: {cfg.tuner.rolling_split}",
+        f"Window stride: {cfg.tuner.window_stride}",
         f"Agent train episodes per step: {train_episodes}",
         f"Agent steps per episode: {steps_per_episode}",
         f"Decision weights: acc={cfg.tuner.reward.decision_accuracy_weight}, "
@@ -905,6 +998,12 @@ def run_rl_tuner_agent(
         f"Accuracy variance (last {stability_window}): "
         f"{best_state['metrics'].get('accuracy_variance', 0.0):.4f}",
         adaptation_line,
+        "",
+        "## Window metrics (per episode)",
+        *window_summary_rows,
+        "",
+        "## Window metric means",
+        *mean_lines,
         "",
         "## RL policy effectiveness",
         f"- RL UP accuracy (val): {best_state['metrics'].get('rl_up_accuracy', 0.0):.4f}",
