@@ -14,12 +14,16 @@ import yaml
 from cryptomvp.bybit.rest import BybitRestClient
 from cryptomvp.config import load_config
 from cryptomvp.data.build_dataset import fetch_klines_range, klines_to_dataframe, save_dataset
-from cryptomvp.data.features import compute_features
+from cryptomvp.data.features import compute_features, compute_regime_labels
 from cryptomvp.data.labels import make_up_down_labels
 from cryptomvp.data.scaling import apply_standard_scaler, fit_standard_scaler
 from cryptomvp.data.windowing import make_windows
 from cryptomvp.decision.rule import batch_decide
-from cryptomvp.evaluate.metrics import compute_metrics, compute_metrics_by_session
+from cryptomvp.evaluate.metrics import (
+    compute_metrics,
+    compute_metrics_by_regime,
+    compute_metrics_by_session,
+)
 from cryptomvp.models.down_model import DownModel
 from cryptomvp.models.up_model import UpModel
 from cryptomvp.features.registry import resolve_feature_list
@@ -174,6 +178,7 @@ def _build_decision_log(
     t_min: float,
     delta_min: float,
     session_id: np.ndarray | None,
+    regime: np.ndarray | None = None,
 ) -> pd.DataFrame:
     true_dir = np.where(y_up == 1, "UP", np.where(y_down == 1, "DOWN", "FLAT"))
     decisions = np.array(batch_decide(p_up, p_down, t_min, delta_min=delta_min))
@@ -188,6 +193,8 @@ def _build_decision_log(
             "conflict": conflict.astype(int),
         }
     )
+    if regime is not None:
+        df["regime"] = regime
     if session_id is not None:
         df["session_id"] = session_id
     return df
@@ -197,6 +204,7 @@ def _write_metrics_artifacts(
     report_dir: Path,
     metrics: Dict[str, object],
     metrics_by_session: Dict[str, Dict[str, object]],
+    metrics_by_regime: Dict[str, Dict[str, object]],
     figures_dir: Path,
 ) -> None:
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -204,6 +212,9 @@ def _write_metrics_artifacts(
     (report_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     (report_dir / "metrics_by_session.json").write_text(
         json.dumps(metrics_by_session, indent=2), encoding="utf-8"
+    )
+    (report_dir / "metrics_by_regime.json").write_text(
+        json.dumps(metrics_by_regime, indent=2), encoding="utf-8"
     )
     rows: List[Dict[str, object]] = []
     for key, value in metrics.items():
@@ -217,6 +228,11 @@ def _write_metrics_artifacts(
             rows.append(
                 {"scope": "session", "session_id": session_id, "metric": key, "value": value}
             )
+    for regime_id, regime_metrics in metrics_by_regime.items():
+        for key, value in regime_metrics.items():
+            if key in {"confusion_matrix", "coverage_bins"}:
+                continue
+            rows.append({"scope": "regime", "session_id": regime_id, "metric": key, "value": value})
     pd.DataFrame(rows).to_csv(report_dir / "metrics.csv", index=False)
 
     cm = np.array(metrics["confusion_matrix"])
@@ -333,11 +349,13 @@ def run_fixed_period_eval(
                 features, int(sess_cfg["features"]["window_size_K"])
             )
             y_up, y_down = make_up_down_labels(df_sess, window_times)
+            regime_labels = compute_regime_labels(df_sess, window_times)
             n = min(len(X), len(y_up))
             X = X[:n]
             y_up = y_up[:n]
             y_down = y_down[:n]
             window_times = window_times[:n]
+            regime_labels = regime_labels[:n]
             if len(X) < 100:
                 continue
             p_up, p_down, y_up_t, y_down_t, _, _ = _train_and_predict(
@@ -347,7 +365,15 @@ def run_fixed_period_eval(
             times = window_times[-len(p_up) :]
             sess_id = np.array([session_id] * len(p_up))
             log = _build_decision_log(
-                times, p_up, p_down, y_up_t, y_down_t, t_min, delta_min, sess_id
+                times,
+                p_up,
+                p_down,
+                y_up_t,
+                y_down_t,
+                t_min,
+                delta_min,
+                sess_id,
+                regime_labels[-len(p_up) :],
             )
             decision_logs.append(log)
 
@@ -368,11 +394,13 @@ def run_fixed_period_eval(
             features, int(sess_cfg["features"]["window_size_K"])
         )
         y_up, y_down = make_up_down_labels(df, window_times)
+        regime_labels = compute_regime_labels(df, window_times)
         n = min(len(X), len(y_up))
         X = X[:n]
         y_up = y_up[:n]
         y_down = y_down[:n]
         window_times = window_times[:n]
+        regime_labels = regime_labels[:n]
         session_ids = df.set_index("open_time_ms").loc[window_times, "session_id"].to_numpy()
         p_up, p_down, y_up_t, y_down_t, _, _ = _train_and_predict(
             X, y_up, y_down, sess_cfg, fast=fast, device=device
@@ -380,6 +408,7 @@ def run_fixed_period_eval(
         # align test portion
         test_times = window_times[len(window_times) - len(p_up) :]
         test_sessions = session_ids[len(session_ids) - len(p_up) :]
+        test_regimes = regime_labels[len(regime_labels) - len(p_up) :]
         logs = []
         for session_id in sorted(set(test_sessions)):
             sess_mask = test_sessions == session_id
@@ -394,6 +423,7 @@ def run_fixed_period_eval(
                 t_min,
                 delta_min,
                 np.array([session_id] * int(np.sum(sess_mask))),
+                test_regimes[sess_mask],
             )
             logs.append(log)
             sess_root = sessions_dir(session_id)
@@ -404,7 +434,8 @@ def run_fixed_period_eval(
     full_log = pd.concat(decision_logs, ignore_index=True)
     metrics = compute_metrics(full_log, bootstrap_samples=200, seed=cfg.seed)
     metrics_by_session = compute_metrics_by_session(full_log, bootstrap_samples=200, seed=cfg.seed)
-    _write_metrics_artifacts(report_dir, metrics, metrics_by_session, figures_dir)
+    metrics_by_regime = compute_metrics_by_regime(full_log, bootstrap_samples=200, seed=cfg.seed)
+    _write_metrics_artifacts(report_dir, metrics, metrics_by_session, metrics_by_regime, figures_dir)
 
     full_log.to_parquet(report_dir / "decisions.parquet", index=False)
     (report_dir / "summary.md").write_text(

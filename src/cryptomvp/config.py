@@ -165,6 +165,14 @@ class AdaptationConfig:
     max_conflict_rate: Optional[float]
     min_precision_up: Optional[float]
     min_precision_down: Optional[float]
+    min_action_accuracy_trend: Optional[float] = None
+    min_action_accuracy_flat: Optional[float] = None
+    max_hold_rate_trend: Optional[float] = None
+    max_hold_rate_flat: Optional[float] = None
+    min_precision_up_trend: Optional[float] = None
+    min_precision_down_trend: Optional[float] = None
+    min_precision_up_flat: Optional[float] = None
+    min_precision_down_flat: Optional[float] = None
     min_rl_up_accuracy: Optional[float]
     min_rl_down_accuracy: Optional[float]
     max_rl_up_hold_rate: Optional[float]
@@ -235,6 +243,14 @@ def _parse_adaptation_config(adapt: Dict[str, Any]) -> AdaptationConfig:
         max_conflict_rate=_maybe_float(adapt.get("max_conflict_rate")),
         min_precision_up=_maybe_float(adapt.get("min_precision_up")),
         min_precision_down=_maybe_float(adapt.get("min_precision_down")),
+        min_action_accuracy_trend=_maybe_float(adapt.get("min_action_accuracy_trend")),
+        min_action_accuracy_flat=_maybe_float(adapt.get("min_action_accuracy_flat")),
+        max_hold_rate_trend=_maybe_float(adapt.get("max_hold_rate_trend")),
+        max_hold_rate_flat=_maybe_float(adapt.get("max_hold_rate_flat")),
+        min_precision_up_trend=_maybe_float(adapt.get("min_precision_up_trend")),
+        min_precision_down_trend=_maybe_float(adapt.get("min_precision_down_trend")),
+        min_precision_up_flat=_maybe_float(adapt.get("min_precision_up_flat")),
+        min_precision_down_flat=_maybe_float(adapt.get("min_precision_down_flat")),
         min_rl_up_accuracy=_maybe_float(adapt.get("min_rl_up_accuracy")),
         min_rl_down_accuracy=_maybe_float(adapt.get("min_rl_down_accuracy")),
         max_rl_up_hold_rate=_maybe_float(adapt.get("max_rl_up_hold_rate")),

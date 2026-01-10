@@ -1351,6 +1351,18 @@ features:
     min_history_bars: 21
     requires_extra_data: false
     description: Trend strength proxy from slope.
+  - id: regime_trend_20
+    name: regime_trend_20
+    category: regime
+    required_columns: [close]
+    params: {window: 20}
+    compute_cost: cheap
+    leakage_risk: false
+    default_enabled: false
+    needs_resample_tf: false
+    min_history_bars: 21
+    requires_extra_data: false
+    description: Trend/flat regime flag from SMA slope vs volatility.
   - id: mean_reversion_score
     name: mean_reversion_score
     category: regime

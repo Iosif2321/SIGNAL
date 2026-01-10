@@ -22,7 +22,7 @@ if str(SRC) not in sys.path:
 
 from cryptomvp.analysis.adaptation import assess_adaptation  # noqa: E402
 from cryptomvp.config import load_config  # noqa: E402
-from cryptomvp.data.features import compute_features  # noqa: E402
+from cryptomvp.data.features import compute_features, compute_regime_labels  # noqa: E402
 from cryptomvp.data.labels import make_directional_labels  # noqa: E402
 from cryptomvp.data.scaling import apply_standard_scaler, fit_standard_scaler  # noqa: E402
 from cryptomvp.data.windowing import make_windows  # noqa: E402
@@ -157,52 +157,86 @@ def _decision_metrics_from_probs(
     true_dir: np.ndarray,
     threshold: float,
     delta_min: float,
+    regime: np.ndarray | None = None,
 ) -> Dict[str, float]:
     decisions = batch_decide(p_up, p_down, threshold, delta_min=delta_min)
     decisions_arr = np.array(decisions, dtype=object)
-    hold_mask = decisions_arr == "HOLD"
-    action_mask = ~hold_mask
-    hold_rate = float(hold_mask.mean()) if len(decisions_arr) else 0.0
-    action_rate = float(action_mask.mean()) if len(decisions_arr) else 0.0
-    conflict_rate = float(np.mean((p_up >= threshold) & (p_down >= threshold))) if len(p_up) else 0.0
-    action_accuracy = 0.0
-    precision_up = 0.0
-    precision_down = 0.0
-    up_rate = 0.0
-    down_rate = 0.0
-    down_share = 0.0
-    if len(decisions_arr):
-        true_str = np.where(true_dir > 0, "UP", np.where(true_dir < 0, "DOWN", "HOLD"))
-        if action_mask.any():
-            action_accuracy = float(np.mean(decisions_arr[action_mask] == true_str[action_mask]))
-        if (decisions_arr == "UP").any():
-            precision_up = float(np.mean(true_str[decisions_arr == "UP"] == "UP"))
-        if (decisions_arr == "DOWN").any():
-            precision_down = float(np.mean(true_str[decisions_arr == "DOWN"] == "DOWN"))
-        if action_mask.any():
-            up_rate = float(np.mean(decisions_arr[action_mask] == "UP"))
-            down_rate = float(np.mean(decisions_arr[action_mask] == "DOWN"))
-            down_share = down_rate / max(1e-9, (up_rate + down_rate))
-    return {
-        "decision_hold_rate": hold_rate,
-        "decision_action_rate": action_rate,
-        "decision_action_accuracy_non_hold": action_accuracy,
-        "decision_conflict_rate": conflict_rate,
-        "decision_precision_up": precision_up,
-        "decision_precision_down": precision_down,
-        "decision_up_rate": up_rate,
-        "decision_down_rate": down_rate,
-        "decision_down_share": down_share,
-        "hold_rate": hold_rate,
-        "action_rate": action_rate,
-        "action_accuracy_non_hold": action_accuracy,
-        "conflict_rate": conflict_rate,
-        "precision_up": precision_up,
-        "precision_down": precision_down,
-        "up_rate": up_rate,
-        "down_rate": down_rate,
-        "down_share": down_share,
-    }
+    true_str = np.where(true_dir > 0, "UP", np.where(true_dir < 0, "DOWN", "HOLD"))
+
+    def _summarize(
+        decisions_slice: np.ndarray,
+        p_up_slice: np.ndarray,
+        p_down_slice: np.ndarray,
+        true_slice: np.ndarray,
+        suffix: str = "",
+    ) -> Dict[str, float]:
+        hold_mask = decisions_slice == "HOLD"
+        action_mask = ~hold_mask
+        hold_rate = float(hold_mask.mean()) if len(decisions_slice) else 0.0
+        action_rate = float(action_mask.mean()) if len(decisions_slice) else 0.0
+        conflict_rate = (
+            float(np.mean((p_up_slice >= threshold) & (p_down_slice >= threshold)))
+            if len(p_up_slice)
+            else 0.0
+        )
+        action_accuracy = 0.0
+        precision_up = 0.0
+        precision_down = 0.0
+        up_rate = 0.0
+        down_rate = 0.0
+        down_share = 0.0
+        if len(decisions_slice):
+            if action_mask.any():
+                action_accuracy = float(np.mean(decisions_slice[action_mask] == true_slice[action_mask]))
+            if (decisions_slice == "UP").any():
+                precision_up = float(np.mean(true_slice[decisions_slice == "UP"] == "UP"))
+            if (decisions_slice == "DOWN").any():
+                precision_down = float(np.mean(true_slice[decisions_slice == "DOWN"] == "DOWN"))
+            if action_mask.any():
+                up_rate = float(np.mean(decisions_slice[action_mask] == "UP"))
+                down_rate = float(np.mean(decisions_slice[action_mask] == "DOWN"))
+                down_share = down_rate / max(1e-9, (up_rate + down_rate))
+        suffix_key = f"_{suffix}" if suffix else ""
+        return {
+            f"decision_hold_rate{suffix_key}": hold_rate,
+            f"decision_action_rate{suffix_key}": action_rate,
+            f"decision_action_accuracy_non_hold{suffix_key}": action_accuracy,
+            f"decision_conflict_rate{suffix_key}": conflict_rate,
+            f"decision_precision_up{suffix_key}": precision_up,
+            f"decision_precision_down{suffix_key}": precision_down,
+            f"decision_up_rate{suffix_key}": up_rate,
+            f"decision_down_rate{suffix_key}": down_rate,
+            f"decision_down_share{suffix_key}": down_share,
+            f"hold_rate{suffix_key}": hold_rate,
+            f"action_rate{suffix_key}": action_rate,
+            f"action_accuracy_non_hold{suffix_key}": action_accuracy,
+            f"conflict_rate{suffix_key}": conflict_rate,
+            f"precision_up{suffix_key}": precision_up,
+            f"precision_down{suffix_key}": precision_down,
+            f"up_rate{suffix_key}": up_rate,
+            f"down_rate{suffix_key}": down_rate,
+            f"down_share{suffix_key}": down_share,
+        }
+
+    metrics = _summarize(decisions_arr, p_up, p_down, true_str)
+    if regime is not None and len(regime) == len(decisions_arr):
+        regime_arr = np.asarray(regime)
+        if regime_arr.dtype.kind in {"f", "i", "u", "b"}:
+            regime_labels = np.where(regime_arr.astype(float) >= 0.5, "trend", "flat")
+        else:
+            regime_labels = regime_arr.astype(str)
+        for label in ("trend", "flat"):
+            mask = regime_labels == label
+            metrics.update(
+                _summarize(
+                    decisions_arr[mask],
+                    p_up[mask],
+                    p_down[mask],
+                    true_str[mask],
+                    suffix=label,
+                )
+            )
+    return metrics
 
 
 def _load_rl_metrics(metrics_path: Path, prefix: str) -> Dict[str, float]:
@@ -374,10 +408,12 @@ def _prepare_rl_arrays(cfg: Any, dataset_path: Path) -> Dict[str, Any]:
     features = compute_features(df, feature_list)
     X, window_times, feature_cols = make_windows(features, cfg.features.window_size_K)
     y_up_dir, y_down_dir = make_directional_labels(df, window_times)
+    regime_labels = compute_regime_labels(df, window_times)
     n = min(len(X), len(y_up_dir))
     X = X[:n]
     y_up_dir = y_up_dir[:n]
     y_down_dir = y_down_dir[:n]
+    regime_labels = regime_labels[:n]
     X_flat = X.reshape(len(X), -1)
     scaler_path = run_root() / "reports" / "rl_tuner" / "feature_scaler.npz"
     scaler_path.parent.mkdir(parents=True, exist_ok=True)
@@ -402,6 +438,7 @@ def _prepare_rl_arrays(cfg: Any, dataset_path: Path) -> Dict[str, Any]:
         "y_up_val": y_up_dir[train_end:val_end],
         "y_down_train": y_down_dir[:train_end],
         "y_down_val": y_down_dir[train_end:val_end],
+        "regime_val": regime_labels[train_end:val_end],
     }
 
 
@@ -506,6 +543,7 @@ def run_rl_tuner_agent(
     y_up_val = arrays["y_up_val"]
     y_down_train = arrays["y_down_train"]
     y_down_val = arrays["y_down_val"]
+    regime_val = arrays["regime_val"]
 
     reward_cfg = RewardConfig(
         R_correct=cfg.rl.reward.R_correct,
@@ -601,6 +639,7 @@ def run_rl_tuner_agent(
                 y_up_val,
                 threshold=cfg.decision_rule.T_min,
                 delta_min=cfg.decision_rule.delta_min,
+                regime=regime_val,
             )
 
             metrics: Dict[str, float] = {}

@@ -35,6 +35,22 @@ def assess_adaptation(metrics: Dict[str, float], cfg: AdaptationConfig) -> Tuple
     _check_max("conflict_rate", cfg.max_conflict_rate, "conflict_rate")
     _check_min("precision_up", cfg.min_precision_up, "precision_up")
     _check_min("precision_down", cfg.min_precision_down, "precision_down")
+    _check_min(
+        "action_accuracy_non_hold_trend",
+        cfg.min_action_accuracy_trend,
+        "action_accuracy_non_hold_trend",
+    )
+    _check_min(
+        "action_accuracy_non_hold_flat",
+        cfg.min_action_accuracy_flat,
+        "action_accuracy_non_hold_flat",
+    )
+    _check_max("hold_rate_trend", cfg.max_hold_rate_trend, "hold_rate_trend")
+    _check_max("hold_rate_flat", cfg.max_hold_rate_flat, "hold_rate_flat")
+    _check_min("precision_up_trend", cfg.min_precision_up_trend, "precision_up_trend")
+    _check_min("precision_down_trend", cfg.min_precision_down_trend, "precision_down_trend")
+    _check_min("precision_up_flat", cfg.min_precision_up_flat, "precision_up_flat")
+    _check_min("precision_down_flat", cfg.min_precision_down_flat, "precision_down_flat")
     _check_min("rl_up_accuracy", cfg.min_rl_up_accuracy, "rl_up_accuracy")
     _check_min("rl_down_accuracy", cfg.min_rl_down_accuracy, "rl_down_accuracy")
     _check_max("rl_up_hold_rate", cfg.max_rl_up_hold_rate, "rl_up_hold_rate")

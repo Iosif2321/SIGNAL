@@ -245,3 +245,16 @@ def compute_metrics_by_session(
     for session_id, group in df.groupby("session_id"):
         out[str(session_id)] = compute_metrics(group, bootstrap_samples=bootstrap_samples, seed=seed)
     return out
+
+
+def compute_metrics_by_regime(
+    df: pd.DataFrame,
+    bootstrap_samples: int = 0,
+    seed: int = 7,
+) -> Dict[str, Dict[str, object]]:
+    if "regime" not in df.columns:
+        return {}
+    out: Dict[str, Dict[str, object]] = {}
+    for regime_id, group in df.groupby("regime"):
+        out[str(regime_id)] = compute_metrics(group, bootstrap_samples=bootstrap_samples, seed=seed)
+    return out
