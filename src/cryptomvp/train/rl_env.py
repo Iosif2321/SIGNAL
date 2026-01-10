@@ -30,10 +30,13 @@ class DirectionEnv:
         label_action_map: Dict[int, int] | None = None,
         seed: int = 7,
     ) -> None:
+        if len(X) == 0:
+            raise ValueError("DirectionEnv requires a non-empty dataset.")
         self.X = X
         self.y = y
         self.times = times
-        self.steps_per_episode = steps_per_episode
+        self.full_episode = steps_per_episode <= 0 or steps_per_episode >= len(X)
+        self.steps_per_episode = len(X) if self.full_episode else steps_per_episode
         self.reward = reward
         self.label_action_map = label_action_map or {1: 0, -1: 1}
         self.rng = np.random.default_rng(seed)
@@ -41,7 +44,7 @@ class DirectionEnv:
         self.steps = 0
 
     def reset(self) -> np.ndarray:
-        if len(self.X) <= self.steps_per_episode:
+        if self.full_episode or len(self.X) <= self.steps_per_episode:
             self.idx = 0
         else:
             self.idx = int(self.rng.integers(0, len(self.X) - self.steps_per_episode))

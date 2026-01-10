@@ -173,10 +173,10 @@ class AdaptationConfig:
     min_precision_down_trend: Optional[float] = None
     min_precision_up_flat: Optional[float] = None
     min_precision_down_flat: Optional[float] = None
-    min_rl_up_accuracy: Optional[float]
-    min_rl_down_accuracy: Optional[float]
-    max_rl_up_hold_rate: Optional[float]
-    max_rl_down_hold_rate: Optional[float]
+    min_rl_up_accuracy: Optional[float] = None
+    min_rl_down_accuracy: Optional[float] = None
+    max_rl_up_hold_rate: Optional[float] = None
+    max_rl_down_hold_rate: Optional[float] = None
     max_drift_score: Optional[float] = None
 
 

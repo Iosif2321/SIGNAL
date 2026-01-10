@@ -54,7 +54,7 @@ supervised:
 
 rl:
   episodes: 50
-  steps_per_episode: 200
+  steps_per_episode: 0
   gamma: 0.99
   lr: 0.001
   reward:
@@ -84,7 +84,7 @@ tuner:
   mode: agent
   episodes: 50
   agent_train_episodes: 15
-  agent_steps_per_episode: 200
+  agent_steps_per_episode: 0
   agent_reset_to_best: true
   entropy_bonus: 0.01
   lr: 0.1
