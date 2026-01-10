@@ -7,7 +7,7 @@ from torch import nn
 
 
 class PolicyNet(nn.Module):
-    """Simple MLP policy with 2 actions (direction, hold)."""
+    """Simple MLP policy with 2 actions (UP, DOWN)."""
 
     def __init__(self, input_dim: int, hidden_dim: int = 64) -> None:
         super().__init__()

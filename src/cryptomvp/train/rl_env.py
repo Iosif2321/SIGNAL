@@ -17,7 +17,7 @@ class RewardConfig:
 
 
 class DirectionEnv:
-    """Contextual bandit style environment over a fixed dataset."""
+    """Contextual bandit style environment over a fixed dataset (UP/DOWN actions)."""
 
     def __init__(
         self,
@@ -26,6 +26,7 @@ class DirectionEnv:
         steps_per_episode: int,
         reward: RewardConfig,
         times: np.ndarray | None = None,
+        label_action_map: Dict[int, int] | None = None,
         seed: int = 7,
     ) -> None:
         self.X = X
@@ -33,6 +34,7 @@ class DirectionEnv:
         self.times = times
         self.steps_per_episode = steps_per_episode
         self.reward = reward
+        self.label_action_map = label_action_map or {1: 0, -1: 1}
         self.rng = np.random.default_rng(seed)
         self.idx = 0
         self.steps = 0
@@ -48,21 +50,17 @@ class DirectionEnv:
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict[str, float]]:
         curr_idx = self.idx
         label = int(self.y[curr_idx])
-        if action == 0:  # direction
-            if label == 1:
-                reward = self.reward.R_correct
-                correct = True
-            elif label == -1:
-                reward = -self.reward.R_opposite
-                correct = False
-            else:
-                reward = -self.reward.R_wrong
-                correct = False
-            is_hold = False
-        else:
-            reward = -self.reward.R_hold
-            is_hold = True
+        expected_action = self.label_action_map.get(label)
+        if expected_action is None:
+            reward = -self.reward.R_wrong
             correct = False
+        elif action == expected_action:
+            reward = self.reward.R_correct
+            correct = True
+        else:
+            reward = -self.reward.R_opposite
+            correct = False
+        is_hold = False
 
         self.idx += 1
         self.steps += 1

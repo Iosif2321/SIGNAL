@@ -273,6 +273,7 @@ def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
         track_steps=True,
         times=times,
         model_name="down",
+        label_action_map={1: 1, -1: 0},
         device=device,
     )
     torch.save(down_policy.state_dict(), checkpoints_dir() / "rl_down.pt")
