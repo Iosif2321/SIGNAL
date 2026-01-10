@@ -20,7 +20,7 @@ parity:
 
 features:
   window_size_K: 32
-  feature_set_id: null
+  feature_set_id: CORE_MINIMAL
   feature_sets_path: "features/feature_sets.yaml"
   list_of_features:
     - returns
@@ -122,30 +122,12 @@ tuner:
     neighbor_only: false
     always_mutate: true
   param_space:
-    features.feature_set_id:
-      - CORE_MINIMAL
-      - CORE_TREND
-      - CORE_VOL
-      - CORE_VOLUME
-      - CORE_ALL
-      - MTF_LIGHT
-      - SESSION_FRIENDLY
-    features.window_size_K: [16, 32]
-    supervised.epochs: [50]
-    supervised.batch_size: [64]
-    supervised.lr: [0.001, 0.0005]
-    supervised.weight_decay: [0.0001, 0.0]
-    supervised.hidden_dim: [64, 128]
-    supervised.early_stopping_patience: [10]
     decision_rule.T_min: [0.45, 0.50, 0.55, 0.60]
     decision_rule.delta_min: [0.02, 0.04, 0.08]
     decision_rule.use_best_from_scan: [true]
     decision_rule.scan_min: [0.45]
     decision_rule.scan_max: [0.75]
     decision_rule.scan_step: [0.01]
-    rl.episodes: [50]
-    rl.steps_per_episode: [200]
-    rl.gamma: [0.99]
     rl.lr: [0.001, 0.0005]
     rl.entropy_bonus: [0.02, 0.0]
     rl.reward.R_correct: [1.0]
@@ -153,7 +135,6 @@ tuner:
     rl.reward.R_opposite: [2.0, 1.5]
     rl.reward.margin_threshold: [0.02, 0.04, 0.06]
     rl.reward.margin_penalty: [0.3, 0.4]
-    rl.policy_hidden_dim: [64, 128]
 
 adaptation:
   min_action_accuracy: 0.51
