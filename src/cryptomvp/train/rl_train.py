@@ -88,7 +88,7 @@ def train_reinforce(
         low_margins = []
         corrects = []
 
-        for step_idx in range(steps_per_episode):
+        for step_idx in range(env.steps_per_episode):
             state_t = torch.from_numpy(state).float().to(device).unsqueeze(0)
             logits = policy(state_t)
             dist = Categorical(logits=logits)
