@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from cryptomvp.data.features import compute_features
 from cryptomvp.data.labels import make_directional_labels, make_up_down_labels
 from cryptomvp.data.scaling import apply_standard_scaler, fit_standard_scaler
 from cryptomvp.data.windowing import make_windows
+from cryptomvp.decision.rule import batch_decide
 from cryptomvp.features.registry import resolve_feature_list
 from cryptomvp.train.feature_importance import compute_feature_importance
 from cryptomvp.train.rl_env import RewardConfig
@@ -46,6 +48,74 @@ def _build_feature_columns(feature_cols: list[str], window_size: int) -> list[st
         for feature in feature_cols:
             cols.append(f"{feature}_t-{lag_idx}")
     return cols
+
+
+def _labels_to_direction(labels: np.ndarray, up_label: int) -> np.ndarray:
+    directions = np.full(len(labels), "HOLD", dtype=object)
+    directions[labels == up_label] = "UP"
+    directions[labels == -up_label] = "DOWN"
+    return directions
+
+
+def _best_thresholds_by_episode(
+    step_df: pd.DataFrame,
+    thresholds: np.ndarray,
+    delta_values: list[float],
+    hold_rate_limit: float | None,
+    up_label: int,
+) -> list[dict[str, float]]:
+    rows: list[dict[str, float]] = []
+    for episode, group in step_df.groupby("episode"):
+        p_up = group["p_up"].to_numpy(dtype=float)
+        p_down = group["p_down"].to_numpy(dtype=float)
+        labels = group["label"].to_numpy(dtype=int)
+        true_dir = _labels_to_direction(labels, up_label)
+        episode_rows: list[dict[str, float]] = []
+        for delta in delta_values:
+            for t in thresholds:
+                decisions = np.array(batch_decide(p_up, p_down, float(t), delta_min=float(delta)))
+                hold_mask = decisions == "HOLD"
+                hold_rate = float(np.mean(hold_mask))
+                action_mask = ~hold_mask
+                action_rate = float(np.mean(action_mask))
+                conflict_rate = float(np.mean((p_up >= t) & (p_down >= t)))
+                if action_mask.any():
+                    action_accuracy = float(np.mean(decisions[action_mask] == true_dir[action_mask]))
+                else:
+                    action_accuracy = 0.0
+                episode_rows.append(
+                    {
+                        "episode": int(episode),
+                        "threshold": float(t),
+                        "delta_min": float(delta),
+                        "hold_rate": hold_rate,
+                        "action_rate": action_rate,
+                        "action_accuracy_non_hold": action_accuracy,
+                        "conflict_rate": conflict_rate,
+                    }
+                )
+        if not episode_rows:
+            continue
+        if hold_rate_limit is None:
+            candidates = episode_rows
+            constraint_met = True
+        else:
+            candidates = [row for row in episode_rows if row["hold_rate"] <= hold_rate_limit]
+            constraint_met = bool(candidates)
+        if not candidates:
+            candidates = episode_rows
+        best_row = max(
+            candidates,
+            key=lambda row: (
+                row["action_accuracy_non_hold"],
+                -row["hold_rate"],
+                row["action_rate"],
+            ),
+        )
+        best_row = dict(best_row)
+        best_row["hold_rate_constraint_met"] = constraint_met
+        rows.append(best_row)
+    return rows
 
 
 def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
@@ -203,6 +273,41 @@ def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
         state_df = pd.DataFrame(state_values, columns=state_cols)
         step_df = pd.concat([step_df, state_df], axis=1)
         step_df.to_parquet(up_report / "step_log.parquet", index=False)
+        thresholds = np.arange(
+            cfg.decision_rule.scan_min,
+            cfg.decision_rule.scan_max + cfg.decision_rule.scan_step / 2,
+            cfg.decision_rule.scan_step,
+        )
+        delta_values = cfg.decision_rule.delta_grid or [cfg.decision_rule.delta_min]
+        hold_rate_limit = (
+            cfg.adaptation.max_hold_rate
+            if cfg.adaptation and cfg.adaptation.max_hold_rate is not None
+            else None
+        )
+        best_rows = _best_thresholds_by_episode(
+            step_df,
+            thresholds=thresholds,
+            delta_values=list(delta_values),
+            hold_rate_limit=hold_rate_limit,
+            up_label=1,
+        )
+        (up_report / "best_decision_threshold.json").write_text(
+            json.dumps(
+                {
+                    "policy": "rl_up",
+                    "hold_rate_limit": hold_rate_limit,
+                    "threshold_scan": {
+                        "t_min": cfg.decision_rule.scan_min,
+                        "t_max": cfg.decision_rule.scan_max,
+                        "t_step": cfg.decision_rule.scan_step,
+                        "delta_grid": list(delta_values),
+                    },
+                    "episodes": best_rows,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
     up_imp, up_imp_agg = compute_feature_importance(
         up_policy, feature_cols, cfg.features.window_size_K
     )
@@ -351,6 +456,41 @@ def run_rl(config_path: str, fast: bool, run_dir: Path | None = None) -> None:
         state_df = pd.DataFrame(state_values, columns=state_cols)
         step_df = pd.concat([step_df, state_df], axis=1)
         step_df.to_parquet(down_report / "step_log.parquet", index=False)
+        thresholds = np.arange(
+            cfg.decision_rule.scan_min,
+            cfg.decision_rule.scan_max + cfg.decision_rule.scan_step / 2,
+            cfg.decision_rule.scan_step,
+        )
+        delta_values = cfg.decision_rule.delta_grid or [cfg.decision_rule.delta_min]
+        hold_rate_limit = (
+            cfg.adaptation.max_hold_rate
+            if cfg.adaptation and cfg.adaptation.max_hold_rate is not None
+            else None
+        )
+        best_rows = _best_thresholds_by_episode(
+            step_df,
+            thresholds=thresholds,
+            delta_values=list(delta_values),
+            hold_rate_limit=hold_rate_limit,
+            up_label=-1,
+        )
+        (down_report / "best_decision_threshold.json").write_text(
+            json.dumps(
+                {
+                    "policy": "rl_down",
+                    "hold_rate_limit": hold_rate_limit,
+                    "threshold_scan": {
+                        "t_min": cfg.decision_rule.scan_min,
+                        "t_max": cfg.decision_rule.scan_max,
+                        "t_step": cfg.decision_rule.scan_step,
+                        "delta_grid": list(delta_values),
+                    },
+                    "episodes": best_rows,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
     down_imp, down_imp_agg = compute_feature_importance(
         down_policy, feature_cols, cfg.features.window_size_K
     )
