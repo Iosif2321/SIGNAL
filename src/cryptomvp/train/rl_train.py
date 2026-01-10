@@ -53,6 +53,7 @@ def train_reinforce(
     times: np.ndarray | None = None,
     model_name: str = "policy",
     device: torch.device | None = None,
+    label_action_map: Dict[int, int] | None = None,
 ) -> Tuple[PolicyNet, RLHistory]:
     """Train a policy network with REINFORCE on GPU-only."""
     device = device or require_cuda()
@@ -68,6 +69,7 @@ def train_reinforce(
         steps_per_episode=steps_per_episode,
         reward=reward_cfg,
         times=times,
+        label_action_map=label_action_map,
         seed=seed,
     )
 
@@ -105,8 +107,8 @@ def train_reinforce(
                         "index": int(info.get("index", -1)),
                         "time_ms": int(info.get("time_ms", -1)),
                         "action": int(action.item()),
-                        "p_direction": float(probs[0].item()),
-                        "p_hold": float(probs[1].item()),
+                        "p_up": float(probs[0].item()),
+                        "p_down": float(probs[1].item()),
                         "reward": float(reward),
                         "is_hold": float(info["is_hold"]),
                         "correct": float(info["correct"]),

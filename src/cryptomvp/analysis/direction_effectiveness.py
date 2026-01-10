@@ -493,15 +493,8 @@ def _extract_hold_mask(df: pd.DataFrame) -> Tuple[pd.Series, Optional[pd.Series]
     action_col = infer_column(df, ["action", "decision", "signal"], "action", required=False)
     if is_hold_col is not None:
         return df[is_hold_col].astype(float) > 0.5, df[action_col] if action_col else None
-    if action_col is None:
-        raise ValueError(
-            f"Missing action/is_hold columns. Columns={list(df.columns)}"
-        )
-    action = df[action_col]
-    if np.issubdtype(action.dtype, np.number):
-        return action.astype(int) == 1, action
-    action_str = action.astype(str).str.upper()
-    return action_str.isin(["HOLD", "FLAT"]), action
+    hold_mask = pd.Series(False, index=df.index)
+    return hold_mask, df[action_col] if action_col else None
 
 
 def _map_labels_to_steps(step_df: pd.DataFrame, labels: np.ndarray) -> pd.Series:
@@ -524,47 +517,63 @@ def analyze_rl(
     labels: Optional[np.ndarray] = None,
 ) -> Dict[str, float]:
     """Analyze RL logs and generate plots."""
-    p_dir_col = infer_column(step_df, ["p_direction", "prob", "p_dir"], "p_direction", required=False)
+    p_up_col = infer_column(step_df, ["p_up", "prob_up", "p_up_prob"], "p_up", required=False)
+    p_down_col = infer_column(step_df, ["p_down", "prob_down", "p_down_prob"], "p_down", required=False)
     correct_col = infer_column(step_df, ["correct", "is_correct"], "correct", required=False)
-    hold_mask, _ = _extract_hold_mask(step_df)
+    hold_mask, action_series = _extract_hold_mask(step_df)
 
     action_mask = ~hold_mask
     hold_rate = float(hold_mask.mean())
     action_rate = float(action_mask.mean())
 
     action_precision = np.nan
-    if correct_col is not None and action_mask.any():
-        action_precision = float(step_df.loc[action_mask, correct_col].astype(float).mean())
-
     action_recall = np.nan
     f1 = np.nan
-    if labels is not None:
+    if labels is not None and action_series is not None:
         mapped = _map_labels_to_steps(step_df, labels)
         valid = mapped.notna()
         if valid.any():
             y_true = mapped[valid].astype(int)
-            y_pred = action_mask[valid].astype(int)
+            actions = action_series.loc[valid].astype(int)
+            name_lower = name.lower()
+            positive_action = 0 if "up" in name_lower else 1 if "down" in name_lower else 0
+            y_pred = (actions == positive_action).astype(int)
             precision, recall, f1_val, _ = precision_recall_fscore_support(
                 y_true, y_pred, average="binary", pos_label=1, zero_division=0
             )
             action_precision = float(precision)
             action_recall = float(recall)
             f1 = float(f1_val)
+    elif correct_col is not None and action_mask.any():
+        action_precision = float(step_df.loc[action_mask, correct_col].astype(float).mean())
 
     fig_dir = out_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
-    if p_dir_col is not None:
+    if p_up_col is not None:
         time_x, time_label = _time_axis(step_df)
         plot_series_with_band(
             time_x,
-            step_df[p_dir_col].astype(float).to_numpy(),
+            step_df[p_up_col].astype(float).to_numpy(),
             window=rolling_window,
-            title=f"{name} P(Direction) Over Time",
+            title=f"{name} P(UP) Over Time",
             xlabel=time_label,
             ylabel="Probability",
-            label="p_direction",
-            out_base=fig_dir / f"{name.lower()}_p_direction_time",
+            label="p_up",
+            out_base=fig_dir / f"{name.lower()}_p_up_time",
+            formats=formats,
+        )
+    if p_down_col is not None:
+        time_x, time_label = _time_axis(step_df)
+        plot_series_with_band(
+            time_x,
+            step_df[p_down_col].astype(float).to_numpy(),
+            window=rolling_window,
+            title=f"{name} P(DOWN) Over Time",
+            xlabel=time_label,
+            ylabel="Probability",
+            label="p_down",
+            out_base=fig_dir / f"{name.lower()}_p_down_time",
             formats=formats,
         )
 
