@@ -228,6 +228,17 @@ def _time_split(n: int) -> Tuple[int, int]:
     return train_end, val_end
 
 
+def _time_split_with_online(n: int, online_ratio: float) -> Tuple[int, int, int]:
+    if online_ratio < 0 or online_ratio >= 1:
+        raise ValueError("online_split_ratio must be in [0, 1).")
+    online_size = int(n * online_ratio)
+    if online_ratio > 0 and online_size == 0 and n > 0:
+        online_size = 1
+    online_start = n - online_size if online_size > 0 else n
+    train_end, val_end = _time_split(online_start)
+    return train_end, val_end, online_start
+
+
 def _load_feature_scaler(scaler_path: Path, feature_cols: List[str]) -> Tuple[np.ndarray, np.ndarray]:
     if not scaler_path.exists():
         raise RuntimeError(f"Missing RL feature scaler at {scaler_path}.")
@@ -344,16 +355,21 @@ def _prepare_rl_arrays(cfg: Any, dataset_path: Path) -> Dict[str, Any]:
             feature_cols=np.array(feature_cols, dtype=object),
         )
     X_scaled = apply_standard_scaler(X_flat, mean, std)
-    train_end, val_end = _time_split(len(X_scaled))
-    if val_end <= train_end:
+    train_end, val_end, online_start = _time_split_with_online(
+        len(X_scaled), cfg.tuner.online_split_ratio
+    )
+    if val_end <= train_end or online_start <= val_end:
         raise RuntimeError("Not enough samples for RL tuner split.")
     return {
         "X_train": X_scaled[:train_end],
         "X_val": X_scaled[train_end:val_end],
+        "X_online": X_scaled[online_start:],
         "y_up_train": y_up_dir[:train_end],
         "y_up_val": y_up_dir[train_end:val_end],
+        "y_up_online": y_up_dir[online_start:],
         "y_down_train": y_down_dir[:train_end],
         "y_down_val": y_down_dir[train_end:val_end],
+        "y_down_online": y_down_dir[online_start:],
     }
 
 
@@ -454,10 +470,13 @@ def run_rl_tuner_agent(
     arrays = _prepare_rl_arrays(cfg, dataset_path)
     X_train = arrays["X_train"]
     X_val = arrays["X_val"]
+    X_online = arrays["X_online"]
     y_up_train = arrays["y_up_train"]
     y_up_val = arrays["y_up_val"]
+    y_up_online = arrays["y_up_online"]
     y_down_train = arrays["y_down_train"]
     y_down_val = arrays["y_down_val"]
+    y_down_online = arrays["y_down_online"]
 
     reward_cfg = RewardConfig(
         R_correct=cfg.rl.reward.R_correct,
@@ -540,6 +559,24 @@ def run_rl_tuner_agent(
             hidden_dim=cfg.rl.policy_hidden_dim,
             margin_threshold=reward_cfg.margin_threshold,
         )
+        online_rl_up_acc, _, _, _ = _evaluate_policy_state(
+            up_state,
+            X_online,
+            y_up_online,
+            positive_action=0,
+            device=device,
+            hidden_dim=cfg.rl.policy_hidden_dim,
+            margin_threshold=reward_cfg.margin_threshold,
+        )
+        online_rl_down_acc, _, _, _ = _evaluate_policy_state(
+            down_state,
+            X_online,
+            y_down_online,
+            positive_action=1,
+            device=device,
+            hidden_dim=cfg.rl.policy_hidden_dim,
+            margin_threshold=reward_cfg.margin_threshold,
+        )
 
         p_up = up_probs[:, 0] if len(up_probs) else np.array([])
         p_down = down_probs[:, 1] if len(down_probs) else np.array([])
@@ -561,6 +598,8 @@ def run_rl_tuner_agent(
                 "rl_down_error_balance": rl_down_balance,
                 "rl_up_hold_rate": rl_up_low_margin,
                 "rl_down_hold_rate": rl_down_low_margin,
+                "online_rl_up_accuracy": online_rl_up_acc,
+                "online_rl_down_accuracy": online_rl_down_acc,
             }
         )
 
@@ -571,6 +610,8 @@ def run_rl_tuner_agent(
             - cfg.tuner.reward.decision_hold_penalty * metrics["decision_hold_rate"]
             + cfg.tuner.reward.rl_up_accuracy_weight * metrics["rl_up_accuracy"]
             + cfg.tuner.reward.rl_down_accuracy_weight * metrics["rl_down_accuracy"]
+            + cfg.tuner.reward.online_rl_up_accuracy_weight * metrics["online_rl_up_accuracy"]
+            + cfg.tuner.reward.online_rl_down_accuracy_weight * metrics["online_rl_down_accuracy"]
             - cfg.tuner.reward.rl_up_error_balance_penalty * metrics["rl_up_error_balance"]
             - cfg.tuner.reward.rl_down_error_balance_penalty * metrics["rl_down_error_balance"]
             - cfg.tuner.reward.rl_up_hold_penalty * metrics["rl_up_hold_rate"]
@@ -709,6 +750,7 @@ def run_rl_tuner_agent(
         f"Interval: {cfg.interval}",
         f"Seed: {cfg.seed}",
         f"Episodes: {episodes}",
+        f"Online split ratio: {cfg.tuner.online_split_ratio}",
         f"Agent train episodes per step: {train_episodes}",
         f"Agent steps per episode: {steps_per_episode}",
         f"Decision weights: acc={cfg.tuner.reward.decision_accuracy_weight}, "
@@ -717,6 +759,8 @@ def run_rl_tuner_agent(
         f"hold_penalty={cfg.tuner.reward.decision_hold_penalty}",
         f"RL weights: up_acc={cfg.tuner.reward.rl_up_accuracy_weight}, "
         f"down_acc={cfg.tuner.reward.rl_down_accuracy_weight}, "
+        f"online_up_acc={cfg.tuner.reward.online_rl_up_accuracy_weight}, "
+        f"online_down_acc={cfg.tuner.reward.online_rl_down_accuracy_weight}, "
         f"up_error_balance_penalty={cfg.tuner.reward.rl_up_error_balance_penalty}, "
         f"down_error_balance_penalty={cfg.tuner.reward.rl_down_error_balance_penalty}, "
         f"up_hold_penalty={cfg.tuner.reward.rl_up_hold_penalty}, "
@@ -729,6 +773,8 @@ def run_rl_tuner_agent(
         "## RL policy effectiveness",
         f"- RL UP accuracy (val): {best_state['metrics'].get('rl_up_accuracy', 0.0):.4f}",
         f"- RL DOWN accuracy (val): {best_state['metrics'].get('rl_down_accuracy', 0.0):.4f}",
+        f"- RL UP accuracy (online): {best_state['metrics'].get('online_rl_up_accuracy', 0.0):.4f}",
+        f"- RL DOWN accuracy (online): {best_state['metrics'].get('online_rl_down_accuracy', 0.0):.4f}",
         f"- RL UP error balance: {best_state['metrics'].get('rl_up_error_balance', 0.0):.4f}",
         f"- RL DOWN error balance: {best_state['metrics'].get('rl_down_error_balance', 0.0):.4f}",
     ]
@@ -1190,6 +1236,7 @@ def run_rl_tuner(
         f"Interval: {cfg.interval}",
         f"Seed: {cfg.seed}",
         f"Episodes: {episodes}",
+        f"Online split ratio: {cfg.tuner.online_split_ratio}",
         f"Param space entries: {len(param_space)}",
         f"Search explore_prob: {cfg.tuner.search.explore_prob}",
         f"Search mutate_prob: {cfg.tuner.search.mutate_prob}",
@@ -1203,6 +1250,8 @@ def run_rl_tuner(
         f"hold_penalty={cfg.tuner.reward.decision_hold_penalty}",
         f"RL weights: up_acc={cfg.tuner.reward.rl_up_accuracy_weight}, "
         f"down_acc={cfg.tuner.reward.rl_down_accuracy_weight}, "
+        f"online_up_acc={cfg.tuner.reward.online_rl_up_accuracy_weight}, "
+        f"online_down_acc={cfg.tuner.reward.online_rl_down_accuracy_weight}, "
         f"up_error_balance_penalty={cfg.tuner.reward.rl_up_error_balance_penalty}, "
         f"down_error_balance_penalty={cfg.tuner.reward.rl_down_error_balance_penalty}, "
         f"up_hold_penalty={cfg.tuner.reward.rl_up_hold_penalty}, "
@@ -1215,6 +1264,8 @@ def run_rl_tuner(
         "## RL policy effectiveness",
         f"- RL UP accuracy (val): {best_state['metrics'].get('rl_up_accuracy', 0.0):.4f}",
         f"- RL DOWN accuracy (val): {best_state['metrics'].get('rl_down_accuracy', 0.0):.4f}",
+        f"- RL UP accuracy (online): {best_state['metrics'].get('online_rl_up_accuracy', 0.0):.4f}",
+        f"- RL DOWN accuracy (online): {best_state['metrics'].get('online_rl_down_accuracy', 0.0):.4f}",
         f"- RL UP error balance: {best_state['metrics'].get('rl_up_error_balance', 0.0):.4f}",
         f"- RL DOWN error balance: {best_state['metrics'].get('rl_down_error_balance', 0.0):.4f}",
         "",
