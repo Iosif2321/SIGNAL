@@ -360,16 +360,22 @@ def _prepare_rl_arrays(cfg: Any, dataset_path: Path) -> Dict[str, Any]:
     )
     if val_end <= train_end or online_start <= val_end:
         raise RuntimeError("Not enough samples for RL tuner split.")
+    anchor_end = 0
+    if len(X_scaled) > 0:
+        anchor_end = max(1, int(len(X_scaled) * 0.1))
     return {
         "X_train": X_scaled[:train_end],
         "X_val": X_scaled[train_end:val_end],
         "X_online": X_scaled[online_start:],
+        "X_anchor": X_scaled[:anchor_end],
         "y_up_train": y_up_dir[:train_end],
         "y_up_val": y_up_dir[train_end:val_end],
         "y_up_online": y_up_dir[online_start:],
+        "y_up_anchor": y_up_dir[:anchor_end],
         "y_down_train": y_down_dir[:train_end],
         "y_down_val": y_down_dir[train_end:val_end],
         "y_down_online": y_down_dir[online_start:],
+        "y_down_anchor": y_down_dir[:anchor_end],
     }
 
 
@@ -471,12 +477,15 @@ def run_rl_tuner_agent(
     X_train = arrays["X_train"]
     X_val = arrays["X_val"]
     X_online = arrays["X_online"]
+    X_anchor = arrays["X_anchor"]
     y_up_train = arrays["y_up_train"]
     y_up_val = arrays["y_up_val"]
     y_up_online = arrays["y_up_online"]
+    y_up_anchor = arrays["y_up_anchor"]
     y_down_train = arrays["y_down_train"]
     y_down_val = arrays["y_down_val"]
     y_down_online = arrays["y_down_online"]
+    y_down_anchor = arrays["y_down_anchor"]
 
     reward_cfg = RewardConfig(
         R_correct=cfg.rl.reward.R_correct,
@@ -500,6 +509,7 @@ def run_rl_tuner_agent(
     best_reward = -float("inf")
     best_state: Dict[str, Any] | None = None
     results: List[Dict[str, Any]] = []
+    anchor_results: List[Dict[str, Any]] = []
     stability_window = max(1, cfg.viz.moving_window)
     reward_history: List[float] = []
     accuracy_history: List[float] = []
@@ -602,6 +612,25 @@ def run_rl_tuner_agent(
             hidden_dim=cfg.rl.policy_hidden_dim,
             margin_threshold=reward_cfg.margin_threshold,
         )
+        anchor_rl_up_acc, _, _, _ = _evaluate_policy_state(
+            up_state,
+            X_anchor,
+            y_up_anchor,
+            positive_action=0,
+            device=device,
+            hidden_dim=cfg.rl.policy_hidden_dim,
+            margin_threshold=reward_cfg.margin_threshold,
+        )
+        anchor_rl_down_acc, _, _, _ = _evaluate_policy_state(
+            down_state,
+            X_anchor,
+            y_down_anchor,
+            positive_action=1,
+            device=device,
+            hidden_dim=cfg.rl.policy_hidden_dim,
+            margin_threshold=reward_cfg.margin_threshold,
+        )
+        anchor_avg_accuracy = float((anchor_rl_up_acc + anchor_rl_down_acc) / 2.0)
 
         p_up = up_probs[:, 0] if len(up_probs) else np.array([])
         p_down = down_probs[:, 1] if len(down_probs) else np.array([])
@@ -653,6 +682,9 @@ def run_rl_tuner_agent(
                 "rl_down_hold_rate": rl_down_low_margin,
                 "online_rl_up_accuracy": online_rl_up_acc,
                 "online_rl_down_accuracy": online_rl_down_acc,
+                "anchor_rl_up_accuracy": anchor_rl_up_acc,
+                "anchor_rl_down_accuracy": anchor_rl_down_acc,
+                "anchor_avg_accuracy": anchor_avg_accuracy,
             }
         )
 
@@ -683,16 +715,22 @@ def run_rl_tuner_agent(
 
         prev_up = prev_metrics.get("rl_up_accuracy", 0.0) if prev_metrics else 0.0
         prev_down = prev_metrics.get("rl_down_accuracy", 0.0) if prev_metrics else 0.0
+        prev_anchor = prev_metrics.get("anchor_avg_accuracy", anchor_avg_accuracy) if prev_metrics else anchor_avg_accuracy
         delta_up = float(metrics["rl_up_accuracy"] - prev_up)
         delta_down = float(metrics["rl_down_accuracy"] - prev_down)
         improve_up = max(0.0, delta_up)
         improve_down = max(0.0, delta_down)
+        anchor_delta = float(anchor_avg_accuracy - prev_anchor)
+        anchor_degradation = max(0.0, -anchor_delta)
         reward_improve = (
             cfg.tuner.reward.improve_up_accuracy_weight * improve_up
             + cfg.tuner.reward.improve_down_accuracy_weight * improve_down
         )
-        reward_total = float(reward_base + reward_improve)
+        anchor_penalty = cfg.tuner.reward.anchor_penalty * anchor_degradation
+        reward_total = float(reward_base + reward_improve - anchor_penalty)
         metrics["score_improve"] = float(reward_improve)
+        metrics["anchor_delta"] = float(anchor_delta)
+        metrics["anchor_penalty"] = float(anchor_penalty)
         metrics["score"] = reward_total
         metrics["delta_up_accuracy"] = float(delta_up)
         metrics["delta_down_accuracy"] = float(delta_down)
@@ -727,6 +765,16 @@ def run_rl_tuner_agent(
                 **metrics,
             }
         )
+        anchor_results.append(
+            {
+                "episode": ep,
+                "anchor_rl_up_accuracy": anchor_rl_up_acc,
+                "anchor_rl_down_accuracy": anchor_rl_down_acc,
+                "anchor_avg_accuracy": anchor_avg_accuracy,
+                "anchor_delta": float(anchor_delta),
+                "anchor_penalty": float(anchor_penalty),
+            }
+        )
         reward_history.append(float(reward_base_raw))
         accuracy_history.append(float(metrics["decision_action_accuracy_non_hold"]))
         prev_metrics = metrics
@@ -745,6 +793,9 @@ def run_rl_tuner_agent(
 
     history_df = pd.DataFrame(results)
     history_df.to_csv(report_dir / "episode_metrics.csv", index=False)
+    if anchor_results:
+        anchor_df = pd.DataFrame(anchor_results)
+        anchor_df.to_csv(report_dir / "anchor_metrics.csv", index=False)
     episodes_idx = history_df["episode"].to_numpy()
     plot_series_with_band(
         episodes_idx,
@@ -846,7 +897,8 @@ def run_rl_tuner_agent(
         f"up_hold_penalty={cfg.tuner.reward.rl_up_hold_penalty}, "
         f"down_hold_penalty={cfg.tuner.reward.rl_down_hold_penalty}",
         f"Improve weights: up={cfg.tuner.reward.improve_up_accuracy_weight}, "
-        f"down={cfg.tuner.reward.improve_down_accuracy_weight}",
+        f"down={cfg.tuner.reward.improve_down_accuracy_weight}, "
+        f"anchor_penalty={cfg.tuner.reward.anchor_penalty}",
         f"Best reward: {best_state['reward']:.4f}",
         f"Reward variance (last {stability_window}): "
         f"{best_state['metrics'].get('reward_variance', 0.0):.4f}",
