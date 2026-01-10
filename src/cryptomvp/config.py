@@ -109,6 +109,8 @@ class TunerRewardConfig:
     decision_min_session_precision_down_weight: float = 0.0
     decision_max_session_hold_penalty: float = 0.0
     decision_max_session_conflict_penalty: float = 0.0
+    decision_balance_penalty: float = 0.0
+    decision_down_target: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -359,6 +361,8 @@ def load_config(path: str | Path) -> Config:
             decision_action_rate_weight=float(tuner["reward"]["decision_action_rate_weight"]),
             decision_conflict_penalty=float(tuner["reward"]["decision_conflict_penalty"]),
             decision_hold_penalty=float(tuner["reward"]["decision_hold_penalty"]),
+            decision_balance_penalty=float(tuner["reward"].get("decision_balance_penalty", 0.0)),
+            decision_down_target=float(tuner["reward"].get("decision_down_target", 0.5)),
             rl_up_accuracy_weight=float(tuner["reward"].get("rl_up_accuracy_weight", 0.0)),
             rl_down_accuracy_weight=float(tuner["reward"].get("rl_down_accuracy_weight", 0.0)),
             online_rl_up_accuracy_weight=float(
