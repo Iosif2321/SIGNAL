@@ -94,6 +94,8 @@ class TunerRewardConfig:
     decision_hold_penalty: float
     rl_up_accuracy_weight: float
     rl_down_accuracy_weight: float
+    online_rl_up_accuracy_weight: float
+    online_rl_down_accuracy_weight: float
     rl_up_error_balance_penalty: float
     rl_down_error_balance_penalty: float
     rl_up_hold_penalty: float
@@ -148,6 +150,7 @@ class TunerConfig:
     mode: str = "search"
     agent_train_episodes: int = 5
     agent_steps_per_episode: int = 200
+    online_split_ratio: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -339,6 +342,12 @@ def load_config(path: str | Path) -> Config:
             decision_hold_penalty=float(tuner["reward"]["decision_hold_penalty"]),
             rl_up_accuracy_weight=float(tuner["reward"].get("rl_up_accuracy_weight", 0.0)),
             rl_down_accuracy_weight=float(tuner["reward"].get("rl_down_accuracy_weight", 0.0)),
+            online_rl_up_accuracy_weight=float(
+                tuner["reward"].get("online_rl_up_accuracy_weight", 0.0)
+            ),
+            online_rl_down_accuracy_weight=float(
+                tuner["reward"].get("online_rl_down_accuracy_weight", 0.0)
+            ),
             rl_up_error_balance_penalty=float(
                 tuner["reward"].get("rl_up_error_balance_penalty", 0.0)
             ),
@@ -420,6 +429,7 @@ def load_config(path: str | Path) -> Config:
             mode=str(tuner.get("mode", "search")),
             agent_train_episodes=int(tuner.get("agent_train_episodes", 5)),
             agent_steps_per_episode=int(tuner.get("agent_steps_per_episode", data["rl"]["steps_per_episode"])),
+            online_split_ratio=float(tuner.get("online_split_ratio", 0.0)),
         )
 
     adaptation_cfg = None
