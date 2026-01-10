@@ -102,6 +102,7 @@ class TunerRewardConfig:
     rl_down_hold_penalty: float
     improve_up_accuracy_weight: float
     improve_down_accuracy_weight: float
+    stability_penalty: float = 0.0
     decision_min_session_accuracy_weight: float = 0.0
     decision_min_session_precision_up_weight: float = 0.0
     decision_min_session_precision_down_weight: float = 0.0
@@ -362,6 +363,7 @@ def load_config(path: str | Path) -> Config:
             improve_down_accuracy_weight=float(
                 tuner["reward"].get("improve_down_accuracy_weight", 0.0)
             ),
+            stability_penalty=float(tuner["reward"].get("stability_penalty", 0.0)),
             decision_min_session_accuracy_weight=float(
                 tuner["reward"].get("decision_min_session_accuracy_weight", 0.0)
             ),

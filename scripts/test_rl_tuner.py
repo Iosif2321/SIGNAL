@@ -500,6 +500,15 @@ def run_rl_tuner_agent(
     best_reward = -float("inf")
     best_state: Dict[str, Any] | None = None
     results: List[Dict[str, Any]] = []
+    stability_window = max(1, cfg.viz.moving_window)
+    reward_history: List[float] = []
+    accuracy_history: List[float] = []
+
+    def rolling_variance(history: List[float], current: float, window: int) -> float:
+        values = (history + [current])[-window:]
+        if len(values) < 2:
+            return 0.0
+        return float(np.var(values))
 
     for ep in range(1, episodes + 1):
         up_policy, up_hist = train_reinforce(
@@ -603,7 +612,7 @@ def run_rl_tuner_agent(
             }
         )
 
-        reward_base = (
+        reward_base_raw = (
             cfg.tuner.reward.decision_accuracy_weight * metrics["decision_action_accuracy_non_hold"]
             + cfg.tuner.reward.decision_action_rate_weight * metrics["decision_action_rate"]
             - cfg.tuner.reward.decision_conflict_penalty * metrics["decision_conflict_rate"]
@@ -617,7 +626,16 @@ def run_rl_tuner_agent(
             - cfg.tuner.reward.rl_up_hold_penalty * metrics["rl_up_hold_rate"]
             - cfg.tuner.reward.rl_down_hold_penalty * metrics["rl_down_hold_rate"]
         )
+        variance_reward = rolling_variance(reward_history, float(reward_base_raw), stability_window)
+        variance_accuracy = rolling_variance(
+            accuracy_history,
+            float(metrics["decision_action_accuracy_non_hold"]),
+            stability_window,
+        )
+        reward_base = reward_base_raw - cfg.tuner.reward.stability_penalty * variance_reward
         metrics["score_base"] = float(reward_base)
+        metrics["reward_variance"] = float(variance_reward)
+        metrics["accuracy_variance"] = float(variance_accuracy)
 
         prev_up = prev_metrics.get("rl_up_accuracy", 0.0) if prev_metrics else 0.0
         prev_down = prev_metrics.get("rl_down_accuracy", 0.0) if prev_metrics else 0.0
@@ -665,6 +683,8 @@ def run_rl_tuner_agent(
                 **metrics,
             }
         )
+        reward_history.append(float(reward_base_raw))
+        accuracy_history.append(float(metrics["decision_action_accuracy_non_hold"]))
         prev_metrics = metrics
         logger.info(
             "Agent episode %s/%s - reward=%.4f best=%.4f",
@@ -768,6 +788,10 @@ def run_rl_tuner_agent(
         f"Improve weights: up={cfg.tuner.reward.improve_up_accuracy_weight}, "
         f"down={cfg.tuner.reward.improve_down_accuracy_weight}",
         f"Best reward: {best_state['reward']:.4f}",
+        f"Reward variance (last {stability_window}): "
+        f"{best_state['metrics'].get('reward_variance', 0.0):.4f}",
+        f"Accuracy variance (last {stability_window}): "
+        f"{best_state['metrics'].get('accuracy_variance', 0.0):.4f}",
         adaptation_line,
         "",
         "## RL policy effectiveness",
