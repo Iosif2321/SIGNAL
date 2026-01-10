@@ -13,7 +13,8 @@ class RewardConfig:
     R_correct: float
     R_wrong: float
     R_opposite: float
-    R_hold: float
+    margin_threshold: float
+    margin_penalty: float
 
 
 class DirectionEnv:
@@ -60,14 +61,11 @@ class DirectionEnv:
         else:
             reward = -self.reward.R_opposite
             correct = False
-        is_hold = False
-
         self.idx += 1
         self.steps += 1
         done = self.steps >= self.steps_per_episode or self.idx >= len(self.X)
         next_state = self.X[self.idx] if not done else self.X[self.idx - 1]
         info = {
-            "is_hold": float(is_hold),
             "correct": float(correct),
             "index": float(curr_idx),
             "label": float(label),

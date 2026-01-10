@@ -53,7 +53,8 @@ class RewardConfig:
     R_correct: float
     R_wrong: float
     R_opposite: float
-    R_hold: float
+    margin_threshold: float
+    margin_penalty: float
 
 
 @dataclass(frozen=True)
@@ -279,16 +280,19 @@ def load_config(path: str | Path) -> Config:
         R_correct=float(data["rl"]["reward"]["R_correct"]),
         R_wrong=float(data["rl"]["reward"]["R_wrong"]),
         R_opposite=float(data["rl"]["reward"].get("R_opposite", data["rl"]["reward"]["R_wrong"])),
-        R_hold=float(data["rl"]["reward"]["R_hold"]),
+        margin_threshold=float(data["rl"]["reward"].get("margin_threshold", 0.0)),
+        margin_penalty=float(data["rl"]["reward"].get("margin_penalty", 0.0)),
     )
     if (
         reward_cfg.R_correct <= 0
         or reward_cfg.R_wrong <= 0
         or reward_cfg.R_opposite <= 0
-        or reward_cfg.R_hold <= 0
+        or reward_cfg.margin_threshold < 0
+        or reward_cfg.margin_penalty < 0
     ):
         raise ValueError(
-            "Reward config values must be positive (R_correct/R_wrong/R_opposite/R_hold)."
+            "Reward config values must be positive (R_correct/R_wrong/R_opposite) "
+            "and non-negative (margin_threshold/margin_penalty)."
         )
 
     rl_cfg = RLConfig(

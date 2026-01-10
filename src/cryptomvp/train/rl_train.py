@@ -19,7 +19,7 @@ from cryptomvp.utils.logging import get_logger
 @dataclass
 class RLHistory:
     rewards: List[float]
-    hold_rates: List[float]
+    low_margin_rates: List[float]
     accuracies: List[float]
     entropies: List[float]
     grad_norms: List[float]
@@ -82,7 +82,7 @@ def train_reinforce(
         log_probs = []
         rewards = []
         entropies = []
-        holds = []
+        low_margins = []
         corrects = []
 
         for step_idx in range(steps_per_episode):
@@ -95,10 +95,16 @@ def train_reinforce(
             probs = torch.softmax(logits, dim=1).squeeze(0)
 
             next_state, reward, done, info = env.step(int(action.item()))
+            margin = float(abs(probs[0].item() - probs[1].item()))
+            penalty = 0.0
+            if reward_cfg.margin_threshold > 0.0 and margin < reward_cfg.margin_threshold:
+                penalty = reward_cfg.margin_penalty * (
+                    (reward_cfg.margin_threshold - margin) / reward_cfg.margin_threshold
+                )
+                reward -= penalty
             rewards.append(reward)
-            holds.append(info["is_hold"])
-            if info["is_hold"] < 0.5:
-                corrects.append(info["correct"])
+            low_margins.append(float(margin < reward_cfg.margin_threshold))
+            corrects.append(info["correct"])
             if track_steps:
                 step_logs.append(
                     {
@@ -109,8 +115,10 @@ def train_reinforce(
                         "action": int(action.item()),
                         "p_up": float(probs[0].item()),
                         "p_down": float(probs[1].item()),
+                        "margin": margin,
+                        "low_margin_penalty": float(penalty),
                         "reward": float(reward),
-                        "is_hold": float(info["is_hold"]),
+                        "low_margin": float(margin < reward_cfg.margin_threshold),
                         "correct": float(info["correct"]),
                         "label": float(info.get("label", 0.0)),
                         "state": state.astype(np.float32).tolist(),
@@ -138,12 +146,12 @@ def train_reinforce(
         weight_norm = float(torch.norm(params_vector(policy), p=2).item())
 
         avg_reward = float(np.mean(rewards)) if rewards else 0.0
-        hold_rate = float(np.mean(holds)) if holds else 0.0
+        low_margin_rate = float(np.mean(low_margins)) if low_margins else 0.0
         acc = float(np.mean(corrects)) if corrects else 0.0
         entropy = float(entropy_t.mean().item()) if entropies else 0.0
 
         history.rewards.append(avg_reward)
-        history.hold_rates.append(hold_rate)
+        history.low_margin_rates.append(low_margin_rate)
         history.accuracies.append(acc)
         history.entropies.append(entropy)
         history.grad_norms.append(gnorm)
@@ -151,11 +159,11 @@ def train_reinforce(
         history.weight_norms.append(weight_norm)
 
         logger.info(
-            "Episode %s/%s - reward=%.4f hold=%.3f acc=%.3f entropy=%.3f",
+            "Episode %s/%s - reward=%.4f low_margin=%.3f acc=%.3f entropy=%.3f",
             ep + 1,
             episodes,
             avg_reward,
-            hold_rate,
+            low_margin_rate,
             acc,
             entropy,
         )
